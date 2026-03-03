@@ -1,0 +1,457 @@
+# ChronoSync 后端设计文档
+
+## 1. 项目概述
+
+ChronoSync 是一款运行于 Android 平台，具备极致 iOS/macOS 视觉美学的个人智能日程助手。后端采用云原生架构，提供用户管理、日程/备忘录存储、自然语言处理（NL2指令）以及基于历史数据的智能问答（RAG）功能。后端与 Android 客户端通过 RESTful API 和 WebSocket 进行通信，所有 AI 能力均基于大赛指定的国产 AI 工具实现。
+
+## 2. 技术栈
+
+| 组件               | 技术选择                                     | 说明                                 |
+| ------------------ | -------------------------------------------- | ------------------------------------ |
+| Web 框架           | FastAPI                                      | 高性能、异步支持、自动 OpenAPI 文档 |
+| 数据库             | PostgreSQL 15 + pgvector                      | 存储结构化数据，支持向量检索         |
+| ORM                | SQLAlchemy 2.0 (async)                        | 异步数据库操作                       |
+| 迁移工具           | Alembic                                       | 管理数据库版本                       |
+| 认证               | JWT (python-jose) + bcrypt (passlib)          | 无状态认证                           |
+| AI Agent 框架      | 原生 Function Calling（通义/文心）或 LangChain | 将自然语言转为结构化指令             |
+| 向量嵌入           | 通义 text-embedding-v2 / 文心 embedding       | 将文本转为向量                       |
+| RAG 检索           | pgvector 向量相似度搜索 + LLM 生成             | 基于历史数据的问答                   |
+| HTTP 客户端        | HTTPX                                         | 异步调用外部 AI API                  |
+| 实时通信           | WebSocket (FastAPI 原生支持)                   | 推送数据变更                         |
+| 配置管理           | Pydantic Settings                              | 从环境变量加载                       |
+| 容器化             | Docker + Docker Compose                        | 统一开发与部署环境                   |
+
+## 3. 系统架构
+
+整体采用模块化解耦设计，将 AI Agent 和 RAG 作为独立 Python 包与主应用同进程运行，保证开发效率和清晰分工。如需扩展，可拆分为独立微服务。
+
+```
+┌─────────────────┐      HTTPS/WSS      ┌─────────────────────────────────────┐
+│  Android 客户端 │ ←─────────────────→ │            FastAPI 后端              │
+└─────────────────┘                      ├─────────────────────────────────────┤
+                                         │  - 认证中间件                        │
+                                         │  - API 路由层                        │
+                                         │  - 服务层 (业务逻辑)                 │
+                                         │  - Agent 模块 (NL → 指令)            │
+                                         │  - RAG 模块 (向量检索+问答)           │
+                                         │  - 数据库访问层 (SQLAlchemy)         │
+                                         └───────────────┬─────────────────────┘
+                                                           │
+                                                           ▼
+                                            ┌────────────────────────────┐
+                                            │   PostgreSQL + pgvector    │
+                                            │  - 用户表                   │
+                                            │  - 日程表                   │
+                                            │  - 备忘录表                 │
+                                            │  - 向量检索                 │
+                                            └────────────────────────────┘
+```
+
+## 4. 模块划分与职责
+
+### 4.1 核心配置模块 (`core/`)
+- 加载环境变量，提供全局配置对象（数据库 URL、API 密钥、JWT 密钥等）。
+- 定义异常处理、日志配置。
+
+### 4.2 API 路由层 (`api/v1/endpoints/`)
+- 按资源划分路由：`auth`、`events`、`memos`、`agent`、`chat`。
+- 接收请求，解析参数，调用服务层，返回响应。
+- 依赖注入 `get_current_user` 获取当前登录用户。
+
+### 4.3 服务层 (`services/`)
+- 封装业务逻辑，如用户注册、日程增删改查、调用 Agent 等。
+- 服务层不直接处理 HTTP 请求，被路由层调用。
+
+### 4.4 Agent 模块 (`agents/`)
+- **职责**：将用户自然语言转化为标准 CRUD 指令（JSON 格式），并执行。
+- 设计抽象基类 `BaseAgent`，定义 `process(text: str, context: dict) -> dict` 方法。
+- 实现具体 Agent（如 `TongyiAgent`、`WenxinAgent`），通过 function calling 调用国产 AI 工具。
+- 工厂模式根据配置或请求参数返回对应 Agent 实例。
+
+### 4.5 RAG 模块 (`rag/`)
+- **职责**：基于用户历史数据（日程/备忘录）进行智能问答。
+- 提供 `generate_embedding(text)` 调用 embedding API。
+- 提供 `vector_search(user_id, query_emb, limit)` 在 pgvector 中检索相似记录。
+- 提供 `answer_question(user_id, question)` 完整 RAG 流程：向量化 → 检索 → 构造 prompt → 调用 LLM 生成 → 返回答案。
+
+### 4.6 数据库访问层 (`db/`, `models/`)
+- SQLAlchemy 模型定义（User、Event、Memo、Conversation 可选）。
+- 数据库会话管理（async session）。
+
+### 4.7 工具模块 (`utils/`)
+- HTTP 客户端单例（复用连接）。
+- 时间处理、字符串处理等辅助函数。
+
+## 5. 数据库设计
+
+### 5.1 用户表 (`users`)
+
+| 字段          | 类型      | 约束               | 说明                 |
+| ------------- | --------- | ------------------ | -------------------- |
+| id            | UUID      | PK, default=gen_uuid | 用户唯一标识         |
+| username      | VARCHAR   | UNIQUE, NOT NULL   | 用户名               |
+| password_hash | VARCHAR   | NOT NULL           | bcrypt 哈希          |
+| created_at    | TIMESTAMP | NOT NULL, default=now() | 注册时间         |
+| updated_at    | TIMESTAMP | NOT NULL, default=now() | 更新时间         |
+
+### 5.2 日程表 (`events`)
+
+| 字段          | 类型        | 约束               | 说明                     |
+| ------------- | ----------- | ------------------ | ------------------------ |
+| id            | UUID        | PK                 | 日程唯一标识             |
+| user_id       | UUID        | FK(users.id)       | 所属用户                 |
+| title         | VARCHAR     | NOT NULL           | 标题                     |
+| description   | TEXT        |                    | 详细描述                 |
+| start_time    | TIMESTAMP   | NOT NULL           | 开始时间                 |
+| end_time      | TIMESTAMP   |                    | 结束时间（可为空）       |
+| location      | VARCHAR     |                    | 地点                     |
+| status        | VARCHAR(20) | default='pending'  | pending/completed/cancelled |
+| embedding     | vector(768) |                    | 向量嵌入（维度根据模型） |
+| created_at    | TIMESTAMP   | NOT NULL, default=now() | 创建时间             |
+| updated_at    | TIMESTAMP   | NOT NULL, default=now() | 更新时间             |
+
+### 5.3 备忘录表 (`memos`)
+
+| 字段          | 类型        | 约束               | 说明                     |
+| ------------- | ----------- | ------------------ | ------------------------ |
+| id            | UUID        | PK                 | 备忘录唯一标识           |
+| user_id       | UUID        | FK(users.id)       | 所属用户                 |
+| content       | TEXT        | NOT NULL           | 内容                     |
+| tags          | VARCHAR[]   |                    | 标签数组                 |
+| embedding     | vector(768) |                    | 向量嵌入                 |
+| created_at    | TIMESTAMP   | NOT NULL, default=now() | 创建时间             |
+| updated_at    | TIMESTAMP   | NOT NULL, default=now() | 更新时间             |
+
+### 5.4 对话历史表 (`conversations`) —— 可选
+
+| 字段          | 类型        | 约束               | 说明                     |
+| ------------- | ----------- | ------------------ | ------------------------ |
+| id            | UUID        | PK                 | 对话唯一标识             |
+| user_id       | UUID        | FK(users.id)       | 所属用户                 |
+| messages      | JSONB       | NOT NULL           | 消息数组（role, content, timestamp） |
+| created_at    | TIMESTAMP   | NOT NULL, default=now() | 创建时间             |
+| updated_at    | TIMESTAMP   | NOT NULL, default=now() | 更新时间             |
+
+**索引建议**：
+- `events(user_id, start_time)` 复合索引，用于快速查询某用户时间范围内的日程。
+- `memos(user_id)` 索引。
+- 向量列使用 `ivfflat` 索引加速相似度搜索。
+
+## 6. API 接口设计
+
+所有接口均返回 JSON 格式，错误时返回 `{"detail": "错误信息"}`。
+
+### 6.1 认证接口
+
+#### 注册 `POST /api/v1/auth/register`
+- 请求体：
+  ```json
+  {
+    "username": "string",
+    "password": "string"
+  }
+  ```
+- 响应：
+  ```json
+  {
+    "user_id": "uuid",
+    "username": "string",
+    "created_at": "datetime"
+  }
+  ```
+
+#### 登录 `POST /api/v1/auth/login`
+- 请求体：
+  ```json
+  {
+    "username": "string",
+    "password": "string"
+  }
+  ```
+- 响应：
+  ```json
+  {
+    "access_token": "string",
+    "token_type": "bearer",
+    "expires_in": 1800
+  }
+  ```
+
+后续请求需在 Header 中添加 `Authorization: Bearer <token>`。
+
+### 6.2 日程接口
+
+所有日程接口均需认证。
+
+#### 获取日程列表 `GET /api/v1/events`
+- 查询参数（可选）：
+  - `start_date` / `end_date`：时间范围过滤（ISO 日期）
+  - `page` / `size`：分页
+- 响应：
+  ```json
+  {
+    "items": [
+      {
+        "id": "uuid",
+        "title": "string",
+        "description": "string",
+        "start_time": "datetime",
+        "end_time": "datetime",
+        "location": "string",
+        "status": "string"
+      }
+    ],
+    "total": 0,
+    "page": 1,
+    "size": 20
+  }
+  ```
+
+#### 创建日程 `POST /api/v1/events`
+- 请求体：
+  ```json
+  {
+    "title": "string",
+    "description": "string?",
+    "start_time": "datetime",
+    "end_time": "datetime?",
+    "location": "string?"
+  }
+  ```
+- 响应：新创建的日程对象（同列表项）
+
+#### 更新日程 `PUT /api/v1/events/{id}`
+- 请求体：同创建，字段全量更新
+- 响应：更新后的日程对象
+
+#### 删除日程 `DELETE /api/v1/events/{id}`
+- 响应：204 No Content
+
+#### 更改状态 `PATCH /api/v1/events/{id}/status`
+- 请求体：`{"status": "completed"}`（pending/completed/cancelled）
+- 响应：更新后的日程对象
+
+### 6.3 备忘录接口
+
+类似日程，路径为 `/api/v1/memos`，请求/响应字段参照数据库设计。
+
+### 6.4 自然语言处理接口
+
+#### 处理用户指令 `POST /api/v1/agent/process`
+- 请求体：
+  ```json
+  {
+    "text": "下周二下午的会推迟一小时",
+    "conversation_id": "uuid?"  // 可选，用于多轮对话上下文
+  }
+  ```
+- 响应：
+  ```json
+  {
+    "action": "update",          // 执行的动作（create/update/delete/query）
+    "entity": "event",           // 实体类型（event/memo）
+    "data": { ... },             // 执行后的数据对象（如更新后的日程）
+    "reply": "已为您将会议推迟到下午4点。" // 自然语言反馈
+  }
+  ```
+
+### 6.5 RAG 聊天接口
+
+#### 基于历史数据问答 `POST /api/v1/chat`
+- 请求体：
+  ```json
+  {
+    "query": "我上周跑了多少次步？"
+  }
+  ```
+- 响应：
+  ```json
+  {
+    "answer": "您上周共跑步3次，分别是3月1日、3月3日和3月5日。",
+    "sources": [  // 可选，来源条目
+      { "type": "event", "id": "uuid", "title": "跑步", "start_time": "..." }
+    ]
+  }
+  ```
+
+### 6.6 支持的 AI 工具列表（可选）
+
+`GET /api/v1/providers` 返回可用的 AI 工具（通义、文心等），便于前端动态显示。
+
+## 7. AI Agent 模块设计（自然语言 → 指令）
+
+### 7.1 核心流程
+
+1. 接收用户文本和可选 conversation_id。
+2. 从数据库加载最近的对话历史（如有）。
+3. 构造 messages 数组（系统提示 + 历史 + 当前用户消息）。
+4. 调用 AI 模型的 function calling 接口，传入预定义的函数定义。
+5. 解析返回的 function_call，确定动作和参数。
+6. 调用相应的服务层方法执行操作（如创建日程）。
+7. 生成自然语言回复（可再次调用模型，或使用模板）。
+8. 返回结果及回复给客户端，并保存本次交互到对话历史。
+
+### 7.2 函数定义示例（需适配具体 AI 工具格式）
+
+- 创建日程
+- 更新日程
+- 删除日程
+- 查询日程
+- 创建备忘录
+- 更新备忘录
+- 删除备忘录
+- 查询备忘录
+
+### 7.3 对话上下文管理
+
+- 在 `conversations` 表中存储每个对话的消息数组，每次请求时携带 `conversation_id`，后端加载最近 N 条消息（如10条）作为上下文。
+- 如果前端不传 ID，则新建对话。
+
+### 7.4 注意事项
+
+- **日期时间解析**：function calling 返回的 start_time 可能是相对描述（如“明天下午3点”），需要后端解析为具体时间。可以在 function 参数中要求模型输出标准格式，或者后端再调用一次模型转换。
+- **错误处理**：如果模型返回的函数名或参数无效，应返回友好错误并记录。
+- **多轮交互**：确保上下文正确传递，使模型能理解指代（如“把它改成4点”）。
+
+## 8. RAG 模块设计
+
+### 8.1 向量生成
+
+- 使用国产 embedding 模型（如通义 text-embedding-v2），每次创建或更新日程/备忘录时，将其文本组合（如 `f"{title} {description} 时间：{start_time}"`）发送给 embedding API，获取向量，存入数据库的 `embedding` 列。
+- 为避免阻塞主流程，可将向量生成放入后台任务（如 FastAPI 的 `BackgroundTasks` 或 Celery）。
+
+### 8.2 向量检索
+
+- 当收到用户查询时，同样调用 embedding API 将问题转为向量。
+- 使用 pgvector 的 `<->` 欧氏距离或 `<=>` 余弦距离，检索与用户相关的日程和备忘录（限定用户 ID）。
+- 可增加时间过滤（如最近一年），提高检索质量。
+
+### 8.3 答案生成
+
+- 将检索到的条目整理成文本上下文，格式例如：
+  ```
+  相关日程：
+  - 3月1日 19:00-20:00 跑步
+  - 3月3日 19:00-20:00 跑步
+  - 3月5日 19:00-20:00 跑步
+  ```
+- 构造 prompt，如：
+  ```
+  你是一个个人助理。基于以下用户日程和备忘录信息回答问题。
+  如果信息不足，请如实说明。
+  信息：
+  {context}
+  
+  问题：{question}
+  答案：
+  ```
+- 调用文本生成模型（通义/文心）生成答案，返回给客户端。
+
+### 8.4 可选：来源标注
+
+- 在响应中加入 `sources` 字段，包含检索到的条目 ID 和摘要，便于客户端展示。
+
+## 9. 数据同步（WebSocket）
+
+### 9.1 连接建立
+
+- 客户端通过 WebSocket 连接 `ws://host/api/v1/ws`，并在连接时携带 JWT token（可通过 query 参数或子协议）。
+- 服务端验证 token，将连接加入以 user_id 命名的房间。
+
+### 9.2 消息推送
+
+- 当后端执行了创建、更新、删除日程/备忘录的操作后（无论通过 Agent 还是手动），向该用户的房间广播消息。
+- 消息格式示例：
+  ```json
+  {
+    "type": "event_created",
+    "data": { "id": "...", "title": "...", ... }
+  }
+  ```
+  或
+  ```json
+  {
+    "type": "event_updated",
+    "data": { "id": "...", "changes": {...} }
+  }
+  ```
+- 客户端收到后更新本地数据。
+
+### 9.3 心跳与重连
+
+- 服务端定期发送 ping 消息，客户端回应 pong 保持连接。
+- 若连接断开，客户端应自动重连。
+
+## 10. 开发环境与部署
+
+### 10.1 环境变量示例 (`.env`)
+
+```
+# 应用配置
+APP_NAME=ChronoSync
+ENVIRONMENT=development
+SECRET_KEY=your-secret-key
+ALGORITHM=HS256
+ACCESS_TOKEN_EXPIRE_MINUTES=30
+
+# 数据库
+DATABASE_URL=postgresql+asyncpg://user:pass@localhost:5432/chronosync
+
+# AI 工具密钥
+TONGYI_API_KEY=sk-xxx
+WENXIN_API_KEY=xxx
+DEEPSEEK_API_KEY=xxx
+
+# 默认 AI 提供者
+DEFAULT_AI_PROVIDER=tongyi
+```
+
+### 10.2 本地开发
+
+- 使用 Docker Compose 启动 PostgreSQL + pgvector 容器。
+- 运行 `uvicorn app.main:app --reload`。
+
+### 10.3 生产部署
+
+- 使用 Docker Compose 编排 FastAPI 应用、PostgreSQL、Nginx（反向代理 + SSL）。
+- 使用 Gunicorn + Uvicorn workers 运行 FastAPI。
+- 配置 Let's Encrypt 获取 SSL 证书，强制 HTTPS。
+- 设置数据库备份策略。
+
+## 11. 开发阶段与计划
+
+### 阶段一：基础框架与 CRUD（2周）
+- 搭建 FastAPI 项目，配置数据库，实现用户认证。
+- 实现日程/备忘录的增删改查接口（无 AI）。
+- 提供 Swagger UI 供前端联调。
+
+### 阶段二：Agent 集成（2周）
+- 接入通义千问（或其他国产工具）的 function calling。
+- 实现 `POST /agent/process` 接口，支持创建/更新/删除/查询。
+- 测试基本指令，如“明天下午3点开会”。
+
+### 阶段三：RAG 与向量检索（2周）
+- 集成 embedding API，在日程/备忘录变更时生成向量。
+- 实现 `POST /chat` 接口，支持基于历史数据的问答。
+- 优化检索效果。
+
+### 阶段四：WebSocket 与实时同步（1周）
+- 实现 WebSocket 连接管理。
+- 在 CRUD 操作后广播变更。
+- 客户端测试同步。
+
+### 阶段五：完善与测试（1周）
+- 错误处理、日志、性能优化。
+- 编写测试用例。
+- 准备参赛文档。
+
+## 12. 大赛合规说明
+
+- 所有 AI 调用均使用大赛附件4列表中的工具（通义千问、文心一言、DeepSeek 等），严禁使用境外模型。
+- 在参赛报名表中详细说明使用的 AI 工具名称、版本及调用方式（function calling、embedding）。
+- 用户数据严格保密，不泄露；地图等敏感内容遵守国家规范。
+- 代码为团队原创，AI 生成部分需注明。
+
+---
+
+文档结束。可复制到 Word 或 Markdown 编辑器中进行排版，并导出为 PDF。

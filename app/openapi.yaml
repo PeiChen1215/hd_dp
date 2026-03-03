@@ -1,0 +1,470 @@
+openapi: 3.0.3
+info:
+  title: ChronoSync API
+  version: '0.1.0'
+  description: OpenAPI 草案，供前后端对齐使用（认证、events、memos、agent、chat、sync）。
+servers:
+  - url: http://localhost:8000
+paths:
+  /api/v1/auth/register:
+    post:
+      summary: 注册
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UserCreate'
+      responses:
+        '201':
+          description: 已创建
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserOut'
+  /api/v1/auth/login:
+    post:
+      summary: 登录
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UserCreate'
+      responses:
+        '200':
+          description: token
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Token'
+
+  /api/v1/events:
+    get:
+      summary: 列表日程
+      parameters:
+        - in: query
+          name: start_date
+          schema:
+            type: string
+        - in: query
+          name: end_date
+          schema:
+            type: string
+        - in: query
+          name: page
+          schema:
+            type: integer
+            default: 1
+        - in: query
+          name: size
+          schema:
+            type: integer
+            default: 20
+      responses:
+        '200':
+          description: 日程列表
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EventList'
+    post:
+      summary: 创建日程
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/EventCreate'
+      responses:
+        '201':
+          description: 创建成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Event'
+
+  /api/v1/events/{serverId}:
+    parameters:
+      - in: path
+        name: serverId
+        required: true
+        schema:
+          type: string
+          format: uuid
+    get:
+      summary: 获取单条日程
+      responses:
+        '200':
+          description: 单条日程
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Event'
+    put:
+      summary: 更新日程（全量）
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/EventCreate'
+      responses:
+        '200':
+          description: 更新后的日程
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Event'
+    delete:
+      summary: 删除日程
+      responses:
+        '204':
+          description: No Content
+
+  /api/v1/events/{serverId}/status:
+    patch:
+      summary: 更改日程状态
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                status:
+                  type: string
+                  enum: [pending, completed, cancelled]
+      responses:
+        '200':
+          description: 更新后的日程
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Event'
+
+  /api/v1/memos:
+    get:
+      summary: 列表备忘录
+      parameters:
+        - in: query
+          name: page
+          schema:
+            type: integer
+            default: 1
+        - in: query
+          name: size
+          schema:
+            type: integer
+            default: 20
+      responses:
+        '200':
+          description: 备忘录列表
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MemoList'
+    post:
+      summary: 创建备忘录
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MemoCreate'
+      responses:
+        '201':
+          description: 创建成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Memo'
+
+  /api/v1/agent/process:
+    post:
+      summary: 处理自然语言指令
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AgentRequest'
+      responses:
+        '200':
+          description: 执行动作与自然语言回复
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AgentResponse'
+
+  /api/v1/chat:
+    post:
+      summary: 基于历史数据的问答（RAG）
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ChatRequest'
+      responses:
+        '200':
+          description: 回答与来源
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ChatResponse'
+
+  /api/v1/providers:
+    get:
+      summary: 可用 AI 提供商列表
+      responses:
+        '200':
+          description: 列表
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Provider'
+
+  /api/v1/sync/events:
+    get:
+      summary: 增量拉取事件
+      parameters:
+        - in: query
+          name: since
+          schema:
+            type: string
+            description: ISO8601 时间或 epoch ms
+      responses:
+        '200':
+          description: 变更集合
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SyncResponse'
+    post:
+      summary: 批量上推/同步事件（upsert）
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SyncRequest'
+      responses:
+        '200':
+          description: 映射结果
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SyncResponse'
+
+components:
+  schemas:
+    UserCreate:
+      type: object
+      properties:
+        username:
+          type: string
+        password:
+          type: string
+      required: [username, password]
+    UserOut:
+      type: object
+      properties:
+        user_id:
+          type: string
+        username:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+    Token:
+      type: object
+      properties:
+        access_token:
+          type: string
+        token_type:
+          type: string
+        expires_in:
+          type: integer
+
+    EventBase:
+      type: object
+      properties:
+        clientId:
+          type: integer
+        serverId:
+          type: string
+          format: uuid
+        title:
+          type: string
+        date:
+          type: string
+        startTime:
+          type: string
+        endTime:
+          type: string
+        start_time:
+          type: string
+          format: date-time
+        end_time:
+          type: string
+          format: date-time
+        type:
+          type: string
+          enum: [WORK, LIFE, STUDY]
+        priority:
+          type: integer
+        deleted:
+          type: boolean
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+    EventCreate:
+      allOf:
+        - $ref: '#/components/schemas/EventBase'
+      required: [title, start_time]
+    Event:
+      allOf:
+        - $ref: '#/components/schemas/EventBase'
+      required: [serverId, title, start_time]
+    EventList:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Event'
+        total:
+          type: integer
+        page:
+          type: integer
+        size:
+          type: integer
+
+    MemoBase:
+      type: object
+      properties:
+        clientId:
+          type: integer
+        serverId:
+          type: string
+          format: uuid
+        title:
+          type: string
+        content:
+          type: string
+        updatedAt:
+          type: integer
+        updated_at:
+          type: string
+          format: date-time
+    MemoCreate:
+      allOf:
+        - $ref: '#/components/schemas/MemoBase'
+      required: [content]
+    Memo:
+      allOf:
+        - $ref: '#/components/schemas/MemoBase'
+      required: [serverId, content]
+    MemoList:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Memo'
+        total:
+          type: integer
+        page:
+          type: integer
+        size:
+          type: integer
+
+    AgentRequest:
+      type: object
+      properties:
+        text:
+          type: string
+        conversation_id:
+          type: string
+    AgentResponse:
+      type: object
+      properties:
+        action:
+          type: string
+        entity:
+          type: string
+        data:
+          type: object
+        reply:
+          type: string
+
+    ChatRequest:
+      type: object
+      properties:
+        query:
+          type: string
+      required: [query]
+    SourceItem:
+      type: object
+      properties:
+        type:
+          type: string
+        id:
+          type: string
+        title:
+          type: string
+        start_time:
+          type: string
+          format: date-time
+    ChatResponse:
+      type: object
+      properties:
+        answer:
+          type: string
+        sources:
+          type: array
+          items:
+            $ref: '#/components/schemas/SourceItem'
+
+    Provider:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        capabilities:
+          type: array
+          items:
+            type: string
+
+    SyncRequest:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/EventCreate'
+    SyncResponse:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            type: object
+            properties:
+              clientId:
+                type: integer
+              serverId:
+                type: string
+              status:
+                type: string
+              updated_at:
+                type: string
+                format: date-time

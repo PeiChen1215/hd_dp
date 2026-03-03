@@ -1,0 +1,75 @@
+个人智能助手 App (ChronoSync) 产品策划与开发计划书
+1. 项目愿景与核心定位
+1.1 产品概述
+本项目旨在开发一款运行于 Android 平台，但具备极致 iOS/macOS 视觉美学的个人智能日程助手。产品通过“端云协同”的双脑架构，解决传统日程应用录入繁琐、缺乏智能调度的痛点。
+1.2 核心价值主张
+•极致美学 (Aesthetic): 在 Android 上复刻 Apple 的 Glassmorphism (毛玻璃) 与非线性动画体验。
+•即时响应 (Instant): 利用端侧小模型 (On-device LLM) 实现毫秒级语义提取，输入即生成日程。
+•全局智能 (Intelligence): 云端 Agent 接管复杂逻辑，通过自然语言管理所有日程，具备长期记忆与推理能力。
+
+2. 核心功能模块详解
+2.1 Android 客户端：感知与交互层
+设计目标： 流畅、直观、零延迟。
+功能点	描述	技术/逻辑
+智能 To-do 输入	用户输入事项时，后台实时清洗文本。	端侧 LLM (TFLite/MediaPipe)
+输入："明早9点开会"
+输出：{"event":"开会", "time":"09:00", "date":"tomorrow"}
+可视化日程 (Timeline)	类似 macOS Calendar 的时间轴视图，支持 To-do 拖拽入轴。	Jetpack Compose
+支持拖拽 (Drag & Drop) 与自动吸附动画。
+即时反馈 (Ghost UI)	识别到时间信息后，立即在时间轴上生成半透明“幽灵块”，确认后固化。	减少用户确认步骤，提升输入爽快感。
+仿 iOS 视觉风格	高斯模糊背景、平滑圆角、弹性阻尼滚动。	Compose Modifier.blur / Custom Shapes / Spring Animation.
+2.2 云端大脑：思考与决策层
+设计目标： 强推理、全知全能、数据中心。
+功能点	描述	技术/逻辑
+自然语言日程管理	用户通过聊天界面发送复杂指令，Agent 执行增删改查。	LLM Agent (Function Calling)
+支持："帮我把下周二的会都推迟一小时"。
+冲突检测与解决	发现日程冲突时，主动提出优化建议。	逻辑层计算时间重叠，Agent 生成自然语言建议。
+历史回溯 (RAG)	询问过去的事件或统计数据。	向量数据库
+"我上个月一共跑了几次步？"
+全量数据同步	云端作为 Source of Truth，确保多端（未来）一致性。	WebSocket / RESTful API 实时同步。
+
+3. 技术架构设计
+本系统采用 "Cloud-First, Local-Intelligence" 架构。端侧负责敏捷交互与隐私脱敏（可选），云端负责重计算与长期存储。
+3.1 架构流程图
+更具图片架构流程图.png
+3.2 技术栈选型
+•客户端 (Android):
+￮语言：Kotlin
+￮UI 框架：Jetpack Compose (声明式 UI)
+￮端侧 AI：MediaPipe LLM Inference / TensorFlow Lite
+￮网络：Retrofit + OkHttp (支持 WebSocket)
+•服务端 (Backend):
+￮语言：Python 3.10+
+￮Web 框架：FastAPI
+￮数据库：PostgreSQL (结构化数据) + pgvector (向量检索)
+￮Agent 框架：LangChain / LangGraph
+
+4. UI/UX 设计规范 (仿 Apple 风格)
+4.1 视觉语言 (Visual Language)
+•材质 (Material): 广泛使用毛玻璃效果 (Backdrop Blur)，背景层级通过透明度区分。
+•色彩 (Color): 纯白/纯黑背景，高饱和度强调色（如 Apple Blue #007AFF），字体采用 San Francisco (Android 端可用 Roboto 替代或引入类似字体)。
+•圆角 (Corner Radius): 统一的大圆角（Card 20dp+，Button 14dp）。
+4.2 交互动效 (Motion)
+•非线性动画: 所有位移和缩放使用 Spring Spec (弹性插值器)，避免线性匀速运动。
+•手势驱动: 支持左滑删除、右滑完成、长按拖拽排序。
+•触觉反馈: 关键操作（如日程吸附、完成打钩）触发 Haptic Feedback。
+
+5. 开发路线图 (Roadmap)
+第一阶段：MVP 核心验证 (4周)
+•目标： 完成基础 UI 框架与云端 CRUD 通路。
+•产出：
+￮Android 端：日历视图 + To-do 列表（静态数据）。
+￮服务端：FastAPI 接口，对接 OpenAI/Claude API 实现基础对话增删日程。
+￮注：暂不集成端侧模型，使用规则引擎代替。
+第二阶段：端侧智能与体验升级 (4-6周)
+•目标： 实现“输入即所得”的流畅体验。
+•产出：
+￮集成 MediaPipe/TFLite，运行量化版 Gemma-2b 或 TinyLlama。
+￮实现输入框文字实时清洗动画。
+￮完善仿 iOS 的高斯模糊与转场动画。
+第三阶段：Agent 能力强化 (4周)
+•目标： 让助手变“聪明”。
+•产出：
+￮引入 RAG，建立用户行为数据库。
+￮开发复杂场景的 Agent 逻辑（冲突解决、自动规划）。
+￮发布 Beta 版本进行内测。

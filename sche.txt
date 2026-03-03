@@ -1,0 +1,65 @@
+chronosync-backend/
+├── app/
+│   ├── __init__.py
+│   ├── main.py                 # FastAPI 应用入口
+│   ├── core/
+│   │   ├── __init__.py
+│   │   ├── config.py           # 配置管理
+│   │   ├── security.py         # JWT、密码加密
+│   │   └── exceptions.py       # 全局异常处理
+│   ├── api/
+│   │   ├── __init__.py
+│   │   ├── v1/
+│   │   │   ├── __init__.py
+│   │   │   ├── endpoints/
+│   │   │   │   ├── __init__.py
+│   │   │   │   ├── auth.py     # 认证接口
+│   │   │   │   ├── events.py   # 日程接口
+│   │   │   │   ├── memos.py    # 备忘录接口
+│   │   │   │   ├── agent.py    # 自然语言处理接口
+│   │   │   │   └── chat.py     # RAG 聊天接口
+│   │   │   └── deps.py         # 通用依赖（获取当前用户）
+│   │   └── deps.py
+│   ├── models/                  # SQLAlchemy 模型
+│   │   ├── __init__.py
+│   │   ├── user.py
+│   │   ├── event.py
+│   │   ├── memo.py
+│   │   └── conversation.py
+│   ├── schemas/                 # Pydantic 模型
+│   │   ├── __init__.py
+│   │   ├── auth.py
+│   │   ├── event.py
+│   │   ├── memo.py
+│   │   ├── agent.py
+│   │   └── chat.py
+│   ├── services/                # 业务逻辑层
+│   │   ├── __init__.py
+│   │   ├── auth_service.py
+│   │   ├── event_service.py
+│   │   ├── memo_service.py
+│   │   ├── agent_service.py
+│   │   └── rag_service.py
+│   ├── agents/                   # AI Agent 模块
+│   │   ├── __init__.py
+│   │   ├── base.py
+│   │   ├── factory.py
+│   │   ├── tongyi_agent.py
+│   │   └── wenxin_agent.py
+│   ├── rag/                       # RAG 模块
+│   │   ├── __init__.py
+│   │   ├── embeddings.py
+│   │   ├── vector_store.py
+│   │   └── qa_chain.py
+│   ├── db/                         # 数据库会话
+│   │   ├── __init__.py
+│   │   ├── session.py
+│   │   └── base.py
+│   └── utils/                      # 工具函数
+│       ├── __init__.py
+│       ├── http_client.py
+│       └── logger.py
+├── .env.example                     # 环境变量示例
+├── requirements.txt                 # 依赖列表
+├── Dockerfile                        # 容器化配置
+└── docker-compose.yml                # 本地开发编排
