@@ -6,11 +6,12 @@ from app.db.session import get_db
 from app.core.config import settings
 from app import schemas
 from app.services import auth_service
+from app.utils.model_converter import user_to_dict
 
 router = APIRouter()
 
 
-@router.post("/register", response_model=schemas.UserOut, status_code=status.HTTP_201_CREATED)
+@router.post("/register", status_code=status.HTTP_201_CREATED)
 async def register(
     payload: schemas.UserCreate,
     db: AsyncSession = Depends(get_db)
@@ -23,7 +24,7 @@ async def register(
     """
     try:
         user = await auth_service.register_user(db, payload)
-        return user
+        return user_to_dict(user)
     except ValueError as e:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,

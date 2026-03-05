@@ -7,11 +7,12 @@ from app.api.v1.deps import get_current_user
 from app.models.user import User
 from app import schemas
 from app.services import memo_service
+from app.utils.model_converter import memo_to_dict
 
 router = APIRouter()
 
 
-@router.get("/", response_model=schemas.MemoList)
+@router.get("/")
 async def list_memos(
     page: int = Query(1, ge=1, description="页码"),
     size: int = Query(20, ge=1, le=100, description="每页数量"),
@@ -30,15 +31,18 @@ async def list_memos(
         size=size
     )
     
+    # 转换为字典
+    memo_dicts = [memo_to_dict(m) for m in memos]
+    
     return {
-        "items": memos,
+        "items": memo_dicts,
         "total": total,
         "page": page,
         "size": size
     }
 
 
-@router.post("/", response_model=schemas.MemoOut, status_code=status.HTTP_201_CREATED)
+@router.post("/", status_code=status.HTTP_201_CREATED)
 async def create_memo(
     payload: schemas.MemoCreate,
     db: AsyncSession = Depends(get_db),
@@ -55,10 +59,10 @@ async def create_memo(
         user_id=str(current_user.id),
         memo_in=payload
     )
-    return memo
+    return memo_to_dict(memo)
 
 
-@router.get("/{memo_id}", response_model=schemas.MemoOut)
+@router.get("/{memo_id}")
 async def get_memo(
     memo_id: str,
     db: AsyncSession = Depends(get_db),
@@ -79,10 +83,10 @@ async def get_memo(
             detail="Memo not found"
         )
     
-    return memo
+    return memo_to_dict(memo)
 
 
-@router.put("/{memo_id}", response_model=schemas.MemoOut)
+@router.put("/{memo_id}")
 async def update_memo(
     memo_id: str,
     payload: schemas.MemoUpdate,
@@ -105,7 +109,7 @@ async def update_memo(
             detail="Memo not found"
         )
     
-    return memo
+    return memo_to_dict(memo)
 
 
 @router.delete("/{memo_id}", status_code=status.HTTP_204_NO_CONTENT)

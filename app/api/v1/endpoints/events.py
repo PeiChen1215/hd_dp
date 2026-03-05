@@ -8,11 +8,12 @@ from app.api.v1.deps import get_current_user
 from app.models.user import User
 from app import schemas
 from app.services import event_service
+from app.utils.model_converter import event_to_dict
 
 router = APIRouter()
 
 
-@router.get("/", response_model=schemas.EventList)
+@router.get("/")
 async def list_events(
     start_date: datetime | None = Query(None, description="开始日期过滤 (ISO 8601)"),
     end_date: datetime | None = Query(None, description="结束日期过滤 (ISO 8601)"),
@@ -35,15 +36,18 @@ async def list_events(
         size=size
     )
     
+    # 转换所有事件为字典
+    event_dicts = [event_to_dict(e) for e in events]
+    
     return {
-        "items": events,
+        "items": event_dicts,
         "total": total,
         "page": page,
         "size": size
     }
 
 
-@router.post("/", response_model=schemas.EventOut, status_code=status.HTTP_201_CREATED)
+@router.post("/", status_code=status.HTTP_201_CREATED)
 async def create_event(
     payload: schemas.EventCreate,
     db: AsyncSession = Depends(get_db),
@@ -63,10 +67,10 @@ async def create_event(
         user_id=str(current_user.id),
         event_in=payload
     )
-    return event
+    return event_to_dict(event)
 
 
-@router.get("/{event_id}", response_model=schemas.EventOut)
+@router.get("/{event_id}")
 async def get_event(
     event_id: str,
     db: AsyncSession = Depends(get_db),
@@ -87,10 +91,10 @@ async def get_event(
             detail="Event not found"
         )
     
-    return event
+    return event_to_dict(event)
 
 
-@router.put("/{event_id}", response_model=schemas.EventOut)
+@router.put("/{event_id}")
 async def update_event(
     event_id: str,
     payload: schemas.EventUpdate,
@@ -113,10 +117,10 @@ async def update_event(
             detail="Event not found"
         )
     
-    return event
+    return event_to_dict(event)
 
 
-@router.patch("/{event_id}/status", response_model=schemas.EventOut)
+@router.patch("/{event_id}/status")
 async def update_event_status(
     event_id: str,
     status: str,
@@ -149,7 +153,7 @@ async def update_event_status(
             detail="Event not found"
         )
     
-    return event
+    return event_to_dict(event)
 
 
 @router.delete("/{event_id}", status_code=status.HTTP_204_NO_CONTENT)
