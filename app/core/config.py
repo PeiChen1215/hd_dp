@@ -15,6 +15,11 @@ class Settings(BaseSettings):
     DATABASE_URL: AnyUrl
 
     DEFAULT_AI_PROVIDER: str = "tongyi"
+    
+    # DeepSeek / 阿里云配置
+    DASHSCOPE_API_KEY: str = ""
+    DASHSCOPE_API_BASE: str = "https://dashscope.aliyuncs.com/compatible-mode/v1"
+    DASHSCOPE_MODEL: str = "deepseek-v3"
 
     class Config:
         env_file = ".env"
