@@ -1,33 +1,132 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, status, Query
 from typing import List
-from app.schemas.memo import MemoCreate, MemoOut
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.db.session import get_db
 from app.api.v1.deps import get_current_user
+from app.models.user import User
+from app import schemas
+from app.services import memo_service
 
 router = APIRouter()
 
 
-@router.get("/", response_model=List[MemoOut])
-async def list_memos(page: int = 1, size: int = 20, user=Depends(get_current_user)):
-    # TODO: implement DB query
-    return []
+@router.get("/", response_model=schemas.MemoList)
+async def list_memos(
+    page: int = Query(1, ge=1, description="页码"),
+    size: int = Query(20, ge=1, le=100, description="每页数量"),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """
+    获取当前用户的备忘录列表
+    
+    按更新时间降序排列
+    """
+    memos, total = await memo_service.list_memos(
+        db=db,
+        user_id=str(current_user.id),
+        page=page,
+        size=size
+    )
+    
+    return {
+        "items": memos,
+        "total": total,
+        "page": page,
+        "size": size
+    }
 
 
-@router.post("/", response_model=MemoOut, status_code=201)
-async def create_memo(payload: MemoCreate, user=Depends(get_current_user)):
-    # TODO: implement creation and return created memo
-    raise HTTPException(status_code=501, detail="Not implemented")
+@router.post("/", response_model=schemas.MemoOut, status_code=status.HTTP_201_CREATED)
+async def create_memo(
+    payload: schemas.MemoCreate,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """
+    创建新备忘录
+    
+    - **content**: 内容（必填）
+    - **tags**: 标签列表（可选）
+    """
+    memo = await memo_service.create_memo(
+        db=db,
+        user_id=str(current_user.id),
+        memo_in=payload
+    )
+    return memo
 
 
-@router.get("/{serverId}")
-async def get_memo(serverId: str, user=Depends(get_current_user)):
-    raise HTTPException(status_code=501, detail="Not implemented")
+@router.get("/{memo_id}", response_model=schemas.MemoOut)
+async def get_memo(
+    memo_id: str,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """
+    获取单个备忘录详情
+    """
+    memo = await memo_service.get_memo_by_id(
+        db=db,
+        memo_id=memo_id,
+        user_id=str(current_user.id)
+    )
+    
+    if not memo:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Memo not found"
+        )
+    
+    return memo
 
 
-@router.put("/{serverId}")
-async def update_memo(serverId: str, payload: MemoCreate, user=Depends(get_current_user)):
-    raise HTTPException(status_code=501, detail="Not implemented")
+@router.put("/{memo_id}", response_model=schemas.MemoOut)
+async def update_memo(
+    memo_id: str,
+    payload: schemas.MemoUpdate,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """
+    更新备忘录（全量或部分更新）
+    """
+    memo = await memo_service.update_memo(
+        db=db,
+        memo_id=memo_id,
+        user_id=str(current_user.id),
+        memo_in=payload
+    )
+    
+    if not memo:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Memo not found"
+        )
+    
+    return memo
 
 
-@router.delete("/{serverId}")
-async def delete_memo(serverId: str, user=Depends(get_current_user)):
-    raise HTTPException(status_code=501, detail="Not implemented")
+@router.delete("/{memo_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_memo(
+    memo_id: str,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """
+    删除备忘录
+    """
+    success = await memo_service.delete_memo(
+        db=db,
+        memo_id=memo_id,
+        user_id=str(current_user.id)
+    )
+    
+    if not success:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Memo not found"
+        )
+    
+    return None

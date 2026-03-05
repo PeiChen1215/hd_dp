@@ -1,4 +1,5 @@
 from pydantic import BaseModel
+from datetime import datetime
 from typing import Optional, List
 
 
@@ -11,8 +12,23 @@ class MemoCreate(MemoBase):
     pass
 
 
+class MemoUpdate(BaseModel):
+    content: Optional[str] = None
+    tags: Optional[List[str]] = None
+
+
 class MemoOut(MemoBase):
     id: str
+    user_id: str
+    created_at: datetime
+    updated_at: Optional[datetime] = None
 
     class Config:
-        orm_mode = True
+        from_attributes = True
+
+
+class MemoList(BaseModel):
+    items: list[MemoOut]
+    total: int
+    page: int
+    size: int

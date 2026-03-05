@@ -20,3 +20,18 @@ def create_access_token(subject: str, expires_delta: Optional[timedelta] = None)
     to_encode = {"sub": subject, "exp": expire}
     encoded_jwt = jwt.encode(to_encode, settings.SECRET_KEY, algorithm=settings.ALGORITHM)
     return encoded_jwt
+
+
+def decode_token(token: str) -> Optional[str]:
+    """解码 JWT token，返回 subject (用户ID)。
+    
+    如果 token 无效或过期，返回 None。
+    """
+    try:
+        payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
+        subject: str = payload.get("sub")
+        if subject is None:
+            return None
+        return subject
+    except jwt.JWTError:
+        return None
