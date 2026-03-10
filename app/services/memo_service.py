@@ -4,6 +4,7 @@ from uuid import UUID
 
 from app.models.memo import Memo
 from app import schemas
+from app.core.websocket import notify_data_change
 
 
 async def get_memo_by_id(db: AsyncSession, memo_id: str, user_id: str) -> Memo | None:
@@ -72,6 +73,15 @@ async def create_memo(
     await db.commit()
     await db.refresh(db_memo)
     
+    # WebSocket 实时推送
+    notify_data_change(
+        user_id=user_id,
+        change_type="created",
+        entity_type="memo",
+        data=_memo_to_dict(db_memo),
+        require_ack=True
+    )
+    
     return db_memo
 
 
@@ -105,6 +115,15 @@ async def update_memo(
     await db.commit()
     await db.refresh(memo)
     
+    # WebSocket 实时推送
+    notify_data_change(
+        user_id=user_id,
+        change_type="updated",
+        entity_type="memo",
+        data=_memo_to_dict(memo),
+        require_ack=True
+    )
+    
     return memo
 
 
@@ -119,7 +138,30 @@ async def delete_memo(db: AsyncSession, memo_id: str, user_id: str) -> bool:
     if not memo:
         return False
     
+    # 先获取数据用于通知
+    memo_data = _memo_to_dict(memo)
+    
     await db.delete(memo)
     await db.commit()
     
+    # WebSocket 实时推送
+    notify_data_change(
+        user_id=user_id,
+        change_type="deleted",
+        entity_type="memo",
+        data=memo_data,
+        require_ack=True
+    )
+    
     return True
+
+
+def _memo_to_dict(memo: Memo) -> dict:
+    """将 Memo 对象转换为字典（用于 WebSocket 推送）"""
+    return {
+        "id": str(memo.id),
+        "content": memo.content,
+        "tags": memo.tags,
+        "created_at": memo.created_at.isoformat() if memo.created_at else None,
+        "updated_at": memo.updated_at.isoformat() if memo.updated_at else None
+    }

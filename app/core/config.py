@@ -17,7 +17,7 @@ class Settings(BaseSettings):
     DEFAULT_AI_PROVIDER: str = "tongyi"
     
     # DeepSeek / 阿里云配置
-    DASHSCOPE_API_KEY: str = "sk-49141e05df7f4584966fac0f8cddbb7d"
+    DASHSCOPE_API_KEY: str = ""
     DASHSCOPE_API_BASE: str = "https://dashscope.aliyuncs.com/compatible-mode/v1"
     DASHSCOPE_MODEL: str = "deepseek-v3"
 

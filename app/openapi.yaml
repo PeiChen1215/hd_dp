@@ -1,14 +1,93 @@
 openapi: 3.0.3
 info:
   title: ChronoSync API
-  version: '0.1.0'
-  description: OpenAPI 草案，供前后端对齐使用（认证、events、memos、agent、chat、sync）。
+  version: '1.0.0'
+  description: |
+    ChronoSync 个人智能助手后端 API
+    
+    ## 同步机制说明
+    
+    本 API 支持**离线优先（Offline-First）**架构：
+    1. **增量同步**: 通过 `/sync/pull` 和 `/sync/push` 实现增量数据同步
+    2. **实时推送**: WebSocket 连接用于实时接收数据变更（多设备同步）
+    3. **冲突解决**: 当多设备同时修改时，通过 `last_synced_at` 检测冲突
+    
+    ## WebSocket 实时通信
+    
+    连接地址: `wss://api.example.com/api/v1/ws?token={JWT_TOKEN}&device_id={DEVICE_ID}`
+    
+    ### 消息协议
+    
+    **1. 连接成功**
+    ```json
+    {
+      "type": "connected",
+      "data": {
+        "server_time": "2026-03-08T12:00:00Z",
+        "device_id": "android_xxx"
+      }
+    }
+    ```
+    
+    **2. 心跳 ping（服务端发送，客户端需回复 pong）**
+    ```json
+    {"type": "ping", "data": {"timestamp": "2026-03-08T12:00:30Z"}}
+    ```
+    
+    **3. 数据变更通知（服务端推送）**
+    ```json
+    {
+      "type": "event_created",  // 或 event_updated, event_deleted, memo_created...
+      "msg_id": "550e8400-e29b-41d4-a716-446655440000",
+      "timestamp": "2026-03-08T12:05:00Z",
+      "require_ack": true,
+      "data": {
+        "id": "550e8400-e29b-41d4-a716-446655440000",
+        "title": "新项目会议",
+        "description": "讨论 Q2 计划",
+        "start_time": "2026-03-09T09:00:00Z",
+        "end_time": "2026-03-09T10:00:00Z",
+        "location": "会议室A",
+        "status": "pending"
+      }
+    }
+    ```
+    
+    **4. 消息确认（客户端发送）**
+    ```json
+    {"type": "ack", "data": {"msg_id": "550e8400-e29b-41d4-a716-446655440000"}}
+    ```
+    
+    **5. 被踢下线通知**
+    ```json
+    {
+      "type": "kickout",
+      "data": {
+        "reason": "new_device_login",
+        "device_id": "android_xxx"
+      }
+    }
+    ```
+    
+    ### 错误码
+    - `4001`: Token 无效或过期
+    - `4002`: 用户被禁用
+    - `4003`: 同设备登录被挤下线
+    - `1011`: 服务器内部错误
+
 servers:
   - url: http://localhost:8000
+    description: 本地开发环境
+  - url: https://api.chronosync.com
+    description: 生产环境
+
 paths:
+  # ========== 认证接口 ==========
   /api/v1/auth/register:
     post:
-      summary: 注册
+      summary: 用户注册
+      tags:
+        - 认证
       requestBody:
         required: true
         content:
@@ -17,14 +96,19 @@ paths:
               $ref: '#/components/schemas/UserCreate'
       responses:
         '201':
-          description: 已创建
+          description: 注册成功
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/UserOut'
+        '400':
+          description: 参数错误或用户名已存在
+
   /api/v1/auth/login:
     post:
-      summary: 登录
+      summary: 用户登录
+      tags:
+        - 认证
       requestBody:
         required: true
         content:
@@ -33,34 +117,47 @@ paths:
               $ref: '#/components/schemas/UserCreate'
       responses:
         '200':
-          description: token
+          description: 登录成功，返回 JWT Token
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/Token'
+        '401':
+          description: 用户名或密码错误
 
+  # ========== 日程接口 ==========
   /api/v1/events:
     get:
-      summary: 列表日程
+      summary: 获取日程列表
+      tags:
+        - 日程
+      security:
+        - bearerAuth: []
       parameters:
         - in: query
           name: start_date
           schema:
             type: string
+            format: date
+          description: 开始日期过滤 (yyyy-MM-dd)
         - in: query
           name: end_date
           schema:
             type: string
+            format: date
+          description: 结束日期过滤 (yyyy-MM-dd)
         - in: query
           name: page
           schema:
             type: integer
             default: 1
+          description: 页码
         - in: query
           name: size
           schema:
             type: integer
             default: 20
+          description: 每页条数
       responses:
         '200':
           description: 日程列表
@@ -68,8 +165,13 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/EventList'
+
     post:
       summary: 创建日程
+      tags:
+        - 日程
+      security:
+        - bearerAuth: []
       requestBody:
         required: true
         content:
@@ -78,7 +180,7 @@ paths:
               $ref: '#/components/schemas/EventCreate'
       responses:
         '201':
-          description: 创建成功
+          description: 创建成功，同时通过 WebSocket 推送给用户其他设备
           content:
             application/json:
               schema:
@@ -92,39 +194,69 @@ paths:
         schema:
           type: string
           format: uuid
+        description: 日程ID（UUID）
+    
     get:
       summary: 获取单条日程
+      tags:
+        - 日程
+      security:
+        - bearerAuth: []
       responses:
         '200':
-          description: 单条日程
+          description: 日程详情
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/Event'
+        '404':
+          description: 日程不存在
+
     put:
-      summary: 更新日程（全量）
+      summary: 更新日程（全量更新）
+      tags:
+        - 日程
+      security:
+        - bearerAuth: []
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/EventCreate'
+              $ref: '#/components/schemas/EventUpdate'
       responses:
         '200':
-          description: 更新后的日程
+          description: 更新成功，同时通过 WebSocket 推送给用户其他设备
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/Event'
+
     delete:
       summary: 删除日程
+      tags:
+        - 日程
+      security:
+        - bearerAuth: []
       responses:
         '204':
-          description: No Content
+          description: 删除成功，同时通过 WebSocket 推送给用户其他设备
 
   /api/v1/events/{serverId}/status:
+    parameters:
+      - in: path
+        name: serverId
+        required: true
+        schema:
+          type: string
+          format: uuid
+    
     patch:
       summary: 更改日程状态
+      tags:
+        - 日程
+      security:
+        - bearerAuth: []
       requestBody:
         required: true
         content:
@@ -135,17 +267,23 @@ paths:
                 status:
                   type: string
                   enum: [pending, completed, cancelled]
+              required: [status]
       responses:
         '200':
-          description: 更新后的日程
+          description: 更新成功
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/Event'
 
+  # ========== 备忘录接口 ==========
   /api/v1/memos:
     get:
-      summary: 列表备忘录
+      summary: 获取备忘录列表
+      tags:
+        - 备忘录
+      security:
+        - bearerAuth: []
       parameters:
         - in: query
           name: page
@@ -164,8 +302,13 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/MemoList'
+
     post:
       summary: 创建备忘录
+      tags:
+        - 备忘录
+      security:
+        - bearerAuth: []
       requestBody:
         required: true
         content:
@@ -174,15 +317,78 @@ paths:
               $ref: '#/components/schemas/MemoCreate'
       responses:
         '201':
-          description: 创建成功
+          description: 创建成功，同时通过 WebSocket 推送给用户其他设备
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/Memo'
 
+  /api/v1/memos/{serverId}:
+    parameters:
+      - in: path
+        name: serverId
+        required: true
+        schema:
+          type: string
+          format: uuid
+    
+    get:
+      summary: 获取单条备忘录
+      tags:
+        - 备忘录
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: 备忘录详情
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Memo'
+
+    put:
+      summary: 更新备忘录
+      tags:
+        - 备忘录
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MemoUpdate'
+      responses:
+        '200':
+          description: 更新成功，同时通过 WebSocket 推送给用户其他设备
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Memo'
+
+    delete:
+      summary: 删除备忘录
+      tags:
+        - 备忘录
+      security:
+        - bearerAuth: []
+      responses:
+        '204':
+          description: 删除成功，同时通过 WebSocket 推送给用户其他设备
+
+  # ========== AI Agent 接口 ==========
   /api/v1/agent/process:
     post:
-      summary: 处理自然语言指令
+      summary: 处理自然语言指令（NL2CRUD）
+      description: |
+        将用户自然语言转换为结构化操作，例如：
+        - "明天下午3点开会" → 创建日程
+        - "把下周二的会推迟一小时" → 更新日程
+        - "删除所有已完成的备忘录" → 批量删除
+      tags:
+        - AI Agent
+      security:
+        - bearerAuth: []
       requestBody:
         required: true
         content:
@@ -191,15 +397,24 @@ paths:
               $ref: '#/components/schemas/AgentRequest'
       responses:
         '200':
-          description: 执行动作与自然语言回复
+          description: 执行结果与自然语言回复
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/AgentResponse'
 
+  # ========== RAG 聊天接口 ==========
   /api/v1/chat:
     post:
       summary: 基于历史数据的问答（RAG）
+      description: |
+        基于用户历史日程和备忘录进行智能问答，例如：
+        - "我上周跑了几次步？"
+        - "总结我本周的工作安排"
+      tags:
+        - RAG
+      security:
+        - bearerAuth: []
       requestBody:
         required: true
         content:
@@ -208,18 +423,23 @@ paths:
               $ref: '#/components/schemas/ChatRequest'
       responses:
         '200':
-          description: 回答与来源
+          description: 回答与数据来源
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/ChatResponse'
 
+  # ========== AI 提供商接口 ==========
   /api/v1/providers:
     get:
-      summary: 可用 AI 提供商列表
+      summary: 获取可用的 AI 提供商列表
+      tags:
+        - 配置
+      security:
+        - bearerAuth: []
       responses:
         '200':
-          description: 列表
+          description: AI 提供商列表
           content:
             application/json:
               schema:
@@ -227,111 +447,253 @@ paths:
                 items:
                   $ref: '#/components/schemas/Provider'
 
-  /api/v1/sync/events:
+  # ========== 增量同步接口 ==========
+  /api/v1/sync/pull:
     get:
-      summary: 增量拉取事件
+      summary: 增量拉取 - 获取服务器变更
+      description: |
+        获取自 `since` 时间戳之后服务器上的所有数据变更。
+        客户端应保存返回的 `server_time` 作为下次同步的 `since` 参数。
+      tags:
+        - 同步
+      security:
+        - bearerAuth: []
       parameters:
         - in: query
           name: since
           schema:
             type: string
-            description: ISO8601 时间或 epoch ms
+            format: date-time
+          description: 上次同步时间（ISO8601格式），为空则拉取全量
+        - in: query
+          name: cursor
+          schema:
+            type: string
+          description: 分页游标（首次不传）
+        - in: query
+          name: limit
+          schema:
+            type: integer
+            default: 100
+            maximum: 500
+          description: 单次最大返回条数
       responses:
         '200':
-          description: 变更集合
+          description: 变更列表
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/SyncResponse'
+                $ref: '#/components/schemas/SyncPullResponse'
+
+  /api/v1/sync/push:
     post:
-      summary: 批量上推/同步事件（upsert）
+      summary: 增量推送 - 上传本地变更
+      description: |
+        将客户端的本地变更推送到服务器。
+        通过 `last_synced_at` 进行冲突检测。
+        如果发生冲突，返回的 `status` 为 `conflict`。
+      tags:
+        - 同步
+      security:
+        - bearerAuth: []
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/SyncRequest'
+              $ref: '#/components/schemas/SyncPushRequest'
       responses:
         '200':
-          description: 映射结果
+          description: 同步结果
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/SyncResponse'
+                $ref: '#/components/schemas/SyncPushResponse'
+
+  /api/v1/sync/resolve-conflict:
+    post:
+      summary: 手动解决同步冲突
+      description: |
+        当推送返回冲突时，调用此接口选择解决策略：
+        - `client`: 使用客户端版本（覆盖服务器）
+        - `server`: 使用服务器版本（放弃本地修改）
+        - `merge`: 合并双方数据（预留）
+      tags:
+        - 同步
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ConflictResolution'
+      responses:
+        '200':
+          description: 冲突已解决
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                  message:
+                    type: string
+
+  /api/v1/sync/full-sync:
+    post:
+      summary: 全量同步（首次安装/数据恢复）
+      description: |
+        首次安装或需要重新同步时调用。
+        客户端上传所有本地数据，服务器返回所有云端数据。
+      tags:
+        - 同步
+      security:
+        - bearerAuth: []
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/FullSyncRequest'
+      responses:
+        '200':
+          description: 全量同步结果
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FullSyncResponse'
+
+  # ========== 健康检查 ==========
+  /health:
+    get:
+      summary: 健康检查
+      tags:
+        - 系统
+      responses:
+        '200':
+          description: 服务正常
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: ok
+                  websocket:
+                    type: object
+                    properties:
+                      online_users:
+                        type: integer
+                      total_connections:
+                        type: integer
 
 components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
   schemas:
+    # ========== 认证相关 ==========
     UserCreate:
       type: object
       properties:
         username:
           type: string
+          minLength: 3
+          maxLength: 150
+          description: 用户名
         password:
           type: string
+          minLength: 6
+          description: 密码（明文，后端会哈希存储）
       required: [username, password]
+
     UserOut:
       type: object
       properties:
         user_id:
           type: string
+          format: uuid
         username:
           type: string
         created_at:
           type: string
           format: date-time
+
     Token:
       type: object
       properties:
         access_token:
           type: string
+          description: JWT Token，用于后续请求
         token_type:
           type: string
+          example: bearer
         expires_in:
           type: integer
+          description: 过期时间（秒）
+          example: 1800
 
+    # ========== 日程相关 ==========
     EventBase:
       type: object
       properties:
-        clientId:
-          type: integer
-        serverId:
-          type: string
-          format: uuid
         title:
           type: string
-        date:
+          description: 日程标题
+        description:
           type: string
-        startTime:
-          type: string
-        endTime:
-          type: string
+          description: 详细描述
         start_time:
           type: string
           format: date-time
+          description: 开始时间（ISO8601）
         end_time:
           type: string
           format: date-time
-        type:
+          description: 结束时间（ISO8601）
+        location:
           type: string
-          enum: [WORK, LIFE, STUDY]
-        priority:
-          type: integer
-        deleted:
-          type: boolean
-        created_at:
+          description: 地点
+        status:
           type: string
-          format: date-time
-        updated_at:
-          type: string
-          format: date-time
+          enum: [pending, completed, cancelled]
+          default: pending
+          description: 日程状态
+
     EventCreate:
       allOf:
         - $ref: '#/components/schemas/EventBase'
       required: [title, start_time]
+
+    EventUpdate:
+      allOf:
+        - $ref: '#/components/schemas/EventBase'
+
     Event:
       allOf:
         - $ref: '#/components/schemas/EventBase'
-      required: [serverId, title, start_time]
+        - type: object
+          properties:
+            id:
+              type: string
+              format: uuid
+              description: 服务器生成的UUID（serverId）
+            user_id:
+              type: string
+              format: uuid
+            created_at:
+              type: string
+              format: date-time
+            updated_at:
+              type: string
+              format: date-time
+          required: [id, user_id, title, start_time]
+
     EventList:
       type: object
       properties:
@@ -341,36 +703,55 @@ components:
             $ref: '#/components/schemas/Event'
         total:
           type: integer
+          description: 总条数
         page:
           type: integer
+          description: 当前页码
         size:
           type: integer
+          description: 每页条数
 
+    # ========== 备忘录相关 ==========
     MemoBase:
       type: object
       properties:
-        clientId:
-          type: integer
-        serverId:
-          type: string
-          format: uuid
-        title:
-          type: string
         content:
           type: string
-        updatedAt:
-          type: integer
-        updated_at:
-          type: string
-          format: date-time
+          description: 备忘录内容
+        tags:
+          type: array
+          items:
+            type: string
+          description: 标签列表
+
     MemoCreate:
       allOf:
         - $ref: '#/components/schemas/MemoBase'
       required: [content]
+
+    MemoUpdate:
+      allOf:
+        - $ref: '#/components/schemas/MemoBase'
+
     Memo:
       allOf:
         - $ref: '#/components/schemas/MemoBase'
-      required: [serverId, content]
+        - type: object
+          properties:
+            id:
+              type: string
+              format: uuid
+            user_id:
+              type: string
+              format: uuid
+            created_at:
+              type: string
+              format: date-time
+            updated_at:
+              type: string
+              format: date-time
+          required: [id, user_id, content]
+
     MemoList:
       type: object
       properties:
@@ -385,86 +766,289 @@ components:
         size:
           type: integer
 
+    # ========== AI Agent 相关 ==========
     AgentRequest:
       type: object
       properties:
         text:
           type: string
+          description: 用户自然语言输入
+          example: 帮我把下周二的会推迟一小时
         conversation_id:
           type: string
+          format: uuid
+          description: 对话ID（可选，用于多轮对话）
+      required: [text]
+
     AgentResponse:
       type: object
       properties:
         action:
           type: string
+          enum: [create, update, delete, query, none]
+          description: 执行的操作类型
         entity:
           type: string
+          enum: [event, memo]
+          description: 操作的目标实体
         data:
           type: object
+          description: 操作后的数据对象
         reply:
           type: string
+          description: 自然语言回复
+          example: 已为您将会议推迟到下午4点
 
+    # ========== RAG 相关 ==========
     ChatRequest:
       type: object
       properties:
         query:
           type: string
+          description: 用户问题
+          example: 我上周跑了几次步？
       required: [query]
+
     SourceItem:
       type: object
       properties:
         type:
           type: string
+          enum: [event, memo]
         id:
           type: string
+          format: uuid
         title:
           type: string
         start_time:
           type: string
           format: date-time
+
     ChatResponse:
       type: object
       properties:
         answer:
           type: string
+          description: AI 生成的回答
+          example: 您上周共跑步3次，分别是3月1日、3月3日和3月5日。
         sources:
           type: array
           items:
             $ref: '#/components/schemas/SourceItem'
+          description: 答案来源（相关的日程/备忘录）
 
+    # ========== AI 提供商 ==========
     Provider:
       type: object
       properties:
         id:
           type: string
+          description: 提供商标识
+          example: tongyi
         name:
           type: string
+          description: 显示名称
+          example: 通义千问
         capabilities:
           type: array
           items:
             type: string
+            enum: [chat, embedding, function_calling]
+          description: 支持的能力
 
-    SyncRequest:
+    # ========== 同步相关 ==========
+    SyncItemPush:
+      type: object
+      description: 单个同步项（客户端 -> 服务器）
+      properties:
+        client_id:
+          type: string
+          description: 客户端本地ID（如 "123"）
+        server_id:
+          type: string
+          format: uuid
+          description: 服务器ID，新建时为 null
+        entity_type:
+          type: string
+          enum: [event, memo]
+        action:
+          type: string
+          enum: [create, update, delete]
+        payload:
+          type: object
+          description: |
+            实体数据（create/update 时必填）
+            - event: {title, description, start_time, end_time, location, status}
+            - memo: {content, tags}
+        modified_at:
+          type: string
+          format: date-time
+          description: 客户端修改时间（ISO8601）
+      required: [client_id, entity_type, action, modified_at]
+
+    SyncPushRequest:
       type: object
       properties:
         items:
           type: array
           items:
-            $ref: '#/components/schemas/EventCreate'
-    SyncResponse:
+            $ref: '#/components/schemas/SyncItemPush'
+          description: 待同步的变更列表
+        last_synced_at:
+          type: string
+          format: date-time
+          description: 上次同步时间，用于冲突检测
+
+    SyncResult:
+      type: object
+      description: 单个同步项的处理结果
+      properties:
+        client_id:
+          type: string
+        server_id:
+          type: string
+          format: uuid
+        status:
+          type: string
+          enum: [success, conflict, error]
+        message:
+          type: string
+        server_modified_at:
+          type: string
+          format: date-time
+        server_data:
+          type: object
+          description: 冲突时返回的服务器数据
+
+    SyncPushResponse:
+      type: object
+      properties:
+        results:
+          type: array
+          items:
+            $ref: '#/components/schemas/SyncResult'
+        conflicts:
+          type: array
+          items:
+            $ref: '#/components/schemas/SyncResult'
+          description: 冲突列表（需要用户解决）
+        server_time:
+          type: string
+          format: date-time
+          description: 服务器当前时间，用于下次同步
+
+    SyncPullItem:
+      type: object
+      description: 拉取的变更项（服务器 -> 客户端）
+      properties:
+        server_id:
+          type: string
+          format: uuid
+        client_id:
+          type: string
+        entity_type:
+          type: string
+          enum: [event, memo]
+        action:
+          type: string
+          enum: [create, update, delete]
+        payload:
+          type: object
+          description: 完整实体数据（delete 时可能为 null）
+        client_modified_at:
+          type: string
+          format: date-time
+        server_modified_at:
+          type: string
+          format: date-time
+      required: [server_id, entity_type, action, server_modified_at]
+
+    SyncPullResponse:
       type: object
       properties:
         items:
           type: array
           items:
-            type: object
-            properties:
-              clientId:
-                type: integer
-              serverId:
-                type: string
-              status:
-                type: string
-              updated_at:
-                type: string
-                format: date-time
+            $ref: '#/components/schemas/SyncPullItem'
+        next_cursor:
+          type: string
+          description: 下一页游标，为空表示没有更多
+        has_more:
+          type: boolean
+        server_time:
+          type: string
+          format: date-time
+          description: 服务器当前时间，用于下次拉取
+
+    ConflictResolution:
+      type: object
+      properties:
+        client_id:
+          type: string
+        server_id:
+          type: string
+          format: uuid
+        entity_type:
+          type: string
+          enum: [event, memo]
+        resolution:
+          type: string
+          enum: [client, server, merge]
+          description: |
+            - client: 使用客户端版本（覆盖服务器）
+            - server: 使用服务器版本（放弃本地）
+            - merge: 合并数据（预留）
+        merged_data:
+          type: object
+          description: merge 时的合并结果数据
+      required: [server_id, entity_type, resolution]
+
+    FullSyncRequest:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/SyncItemPush'
+          description: 客户端所有本地数据
+
+    FullSyncResponse:
+      type: object
+      properties:
+        server_data:
+          type: object
+          properties:
+            events:
+              type: array
+              items:
+                $ref: '#/components/schemas/Event'
+            memos:
+              type: array
+              items:
+                $ref: '#/components/schemas/Memo'
+        push_results:
+          type: array
+          items:
+            $ref: '#/components/schemas/SyncResult'
+        server_time:
+          type: string
+          format: date-time
+
+    # ========== WebSocket 消息（供参考）==========
+    WSMessage:
+      type: object
+      description: WebSocket 消息格式（供参考）
+      properties:
+        type:
+          type: string
+          enum: [connected, ping, pong, ack, event_created, event_updated, event_deleted, memo_created, memo_updated, memo_deleted, kickout, error]
+        msg_id:
+          type: string
+          format: uuid
+        timestamp:
+          type: string
+          format: date-time
+        data:
+          type: object
+        require_ack:
+          type: boolean

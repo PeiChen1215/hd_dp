@@ -6,6 +6,7 @@ from datetime import datetime
 
 from app.models.event import Event
 from app import schemas
+from app.core.websocket import notify_data_change
 
 
 async def get_event_by_id(db: AsyncSession, event_id: str, user_id: str) -> Event | None:
@@ -88,6 +89,15 @@ async def create_event(
     await db.commit()
     await db.refresh(db_event)
     
+    # WebSocket 实时推送（异步，不阻塞）
+    notify_data_change(
+        user_id=user_id,
+        change_type="created",
+        entity_type="event",
+        data=_event_to_dict(db_event),
+        require_ack=True
+    )
+    
     return db_event
 
 
@@ -121,6 +131,15 @@ async def update_event(
     await db.commit()
     await db.refresh(event)
     
+    # WebSocket 实时推送
+    notify_data_change(
+        user_id=user_id,
+        change_type="updated",
+        entity_type="event",
+        data=_event_to_dict(event),
+        require_ack=True
+    )
+    
     return event
 
 
@@ -144,6 +163,15 @@ async def update_event_status(
     await db.commit()
     await db.refresh(event)
     
+    # WebSocket 实时推送
+    notify_data_change(
+        user_id=user_id,
+        change_type="updated",
+        entity_type="event",
+        data=_event_to_dict(event),
+        require_ack=True
+    )
+    
     return event
 
 
@@ -158,7 +186,34 @@ async def delete_event(db: AsyncSession, event_id: str, user_id: str) -> bool:
     if not event:
         return False
     
+    # 先获取数据用于通知
+    event_data = _event_to_dict(event)
+    
     await db.delete(event)
     await db.commit()
     
+    # WebSocket 实时推送
+    notify_data_change(
+        user_id=user_id,
+        change_type="deleted",
+        entity_type="event",
+        data=event_data,
+        require_ack=True
+    )
+    
     return True
+
+
+def _event_to_dict(event: Event) -> dict:
+    """将 Event 对象转换为字典（用于 WebSocket 推送）"""
+    return {
+        "id": str(event.id),
+        "title": event.title,
+        "description": event.description,
+        "start_time": event.start_time.isoformat() if event.start_time else None,
+        "end_time": event.end_time.isoformat() if event.end_time else None,
+        "location": event.location,
+        "status": event.status,
+        "created_at": event.created_at.isoformat() if event.created_at else None,
+        "updated_at": event.updated_at.isoformat() if event.updated_at else None
+    }

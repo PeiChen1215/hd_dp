@@ -2,7 +2,21 @@
 from .auth import UserCreate, UserOut, Token, TokenPayload
 from .event import EventCreate, EventUpdate, EventOut, EventList
 from .memo import MemoCreate, MemoUpdate, MemoOut, MemoList
-from .misc import SyncRequest, SyncResponse, Provider
+from .misc import (
+    Provider,
+    # 旧版同步
+    SyncRequest, 
+    SyncResponse,
+    # 新版增量同步
+    SyncItemPush,
+    SyncPushRequest,
+    SyncPushResponse,
+    SyncResult,
+    SyncPullResponse,
+    ConflictResolution,
+    FullSyncRequest,
+    FullSyncResponse,
+)
 
 __all__ = [
     "UserCreate",
@@ -17,7 +31,16 @@ __all__ = [
     "MemoUpdate",
     "MemoOut",
     "MemoList",
+    "Provider",
+    # 同步相关
     "SyncRequest",
     "SyncResponse",
-    "Provider",
+    "SyncItemPush",
+    "SyncPushRequest",
+    "SyncPushResponse",
+    "SyncResult",
+    "SyncPullResponse",
+    "ConflictResolution",
+    "FullSyncRequest",
+    "FullSyncResponse",
 ]
