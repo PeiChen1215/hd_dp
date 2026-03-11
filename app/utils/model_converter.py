@@ -39,7 +39,8 @@ def event_to_dict(event) -> dict:
     return sqlalchemy_to_dict(event, [
         "id", "user_id", "title", "description", 
         "start_time", "end_time", "location", 
-        "status", "created_at", "updated_at"
+        "status", "type", "priority",  # 新增字段
+        "created_at", "updated_at"
     ])
 
 

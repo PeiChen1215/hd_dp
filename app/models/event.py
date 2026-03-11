@@ -1,5 +1,5 @@
 import uuid
-from sqlalchemy import Column, String, Text, DateTime, ForeignKey
+from sqlalchemy import Column, String, Text, DateTime, ForeignKey, Integer
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID, JSONB
 from sqlalchemy.sql import func
 from sqlalchemy.orm import relationship
@@ -16,6 +16,11 @@ class Event(Base):
     end_time = Column(DateTime(timezone=True))
     location = Column(String(255))
     status = Column(String(20), server_default="pending")
+    
+    # 新增字段：类型和优先级（适配客户端需求）
+    type = Column(String(20), server_default="WORK")  # WORK / LIFE / STUDY
+    priority = Column(Integer, server_default="2")    # 1(低) / 2(中) / 3(高)
+    
     embedding = Column(JSONB)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now(), server_default=func.now())

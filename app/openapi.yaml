@@ -664,6 +664,16 @@ components:
           enum: [pending, completed, cancelled]
           default: pending
           description: 日程状态
+        type:
+          type: string
+          enum: [WORK, LIFE, STUDY]
+          default: WORK
+          description: 事件类型
+        priority:
+          type: integer
+          enum: [1, 2, 3]
+          default: 2
+          description: 优先级（1=低，2=中，3=高）
 
     EventCreate:
       allOf:

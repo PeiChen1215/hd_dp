@@ -322,6 +322,11 @@ async def _apply_event_change(
             existing.end_time = datetime.fromisoformat(payload["end_time"].replace('Z', '+00:00'))
         existing.location = payload.get("location", existing.location)
         existing.status = payload.get("status", existing.status)
+        # 新增字段
+        if "type" in payload:
+            existing.type = payload["type"]
+        if "priority" in payload:
+            existing.priority = payload["priority"]
         return existing.id
     else:
         # 新建
@@ -334,7 +339,9 @@ async def _apply_event_change(
             start_time=datetime.fromisoformat(payload["start_time"].replace('Z', '+00:00')) if payload.get("start_time") else now,
             end_time=datetime.fromisoformat(payload["end_time"].replace('Z', '+00:00')) if payload.get("end_time") else None,
             location=payload.get("location"),
-            status=payload.get("status", "pending")
+            status=payload.get("status", "pending"),
+            type=payload.get("type", "WORK"),  # 新增
+            priority=payload.get("priority", 2)  # 新增
         )
         db.add(new_event)
         return event_id
@@ -376,6 +383,8 @@ def _entity_to_dict(entity, entity_type: str) -> dict:
             "end_time": entity.end_time.isoformat() if entity.end_time else None,
             "location": entity.location,
             "status": entity.status,
+            "type": entity.type,  # 新增
+            "priority": entity.priority,  # 新增
             "created_at": entity.created_at.isoformat() if entity.created_at else None,
             "updated_at": entity.updated_at.isoformat() if entity.updated_at else None
         }

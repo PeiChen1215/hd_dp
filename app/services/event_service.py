@@ -1,10 +1,11 @@
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, and_, func
 from sqlalchemy.orm import selectinload
-from uuid import UUID
-from datetime import datetime
+from uuid import UUID, uuid4
+from datetime import datetime, timezone
 
 from app.models.event import Event
+from app.models.sync_record import SyncRecord
 from app import schemas
 from app.core.websocket import notify_data_change
 
@@ -76,6 +77,7 @@ async def create_event(
     Returns:
         创建的日程对象
     """
+    now = datetime.now(timezone.utc)
     db_event = Event(
         user_id=UUID(user_id),
         title=event_in.title,
@@ -83,9 +85,35 @@ async def create_event(
         start_time=event_in.start_time,
         end_time=event_in.end_time,
         location=event_in.location,
-        status="pending"  # 默认状态
+        status="pending",  # 默认状态
+        type=event_in.type or "WORK",
+        priority=event_in.priority or 2
     )
     db.add(db_event)
+    await db.flush()  # 先 flush 获取 event.id
+    
+    # 创建同步记录（用于增量同步）
+    sync_record = SyncRecord(
+        id=uuid4(),
+        user_id=UUID(user_id),
+        entity_type="event",
+        entity_id=db_event.id,
+        client_id=None,  # HTTP 直接修改没有 client_id
+        action="create",
+        payload={
+            "title": event_in.title,
+            "description": event_in.description,
+            "start_time": event_in.start_time.isoformat() if event_in.start_time else None,
+            "end_time": event_in.end_time.isoformat() if event_in.end_time else None,
+            "location": event_in.location,
+            "status": "pending",
+            "type": event_in.type or "WORK",
+            "priority": event_in.priority or 2
+        },
+        client_modified_at=now,
+        server_modified_at=now
+    )
+    db.add(sync_record)
     await db.commit()
     await db.refresh(db_event)
     
@@ -128,6 +156,26 @@ async def update_event(
     for field, value in update_data.items():
         setattr(event, field, value)
     
+    await db.flush()
+    
+    # 创建同步记录（用于增量同步）
+    now = datetime.now(timezone.utc)
+    sync_record = SyncRecord(
+        id=uuid4(),
+        user_id=UUID(user_id),
+        entity_type="event",
+        entity_id=event.id,
+        client_id=None,
+        action="update",
+        payload={
+            "id": str(event.id),
+            **{k: v.isoformat() if isinstance(v, datetime) else v 
+               for k, v in update_data.items()}
+        },
+        client_modified_at=now,
+        server_modified_at=now
+    )
+    db.add(sync_record)
     await db.commit()
     await db.refresh(event)
     
@@ -160,6 +208,25 @@ async def update_event_status(
         return None
     
     event.status = status
+    await db.flush()
+    
+    # 创建同步记录（用于增量同步）
+    now = datetime.now(timezone.utc)
+    sync_record = SyncRecord(
+        id=uuid4(),
+        user_id=UUID(user_id),
+        entity_type="event",
+        entity_id=event.id,
+        client_id=None,
+        action="update",
+        payload={
+            "id": str(event.id),
+            "status": status
+        },
+        client_modified_at=now,
+        server_modified_at=now
+    )
+    db.add(sync_record)
     await db.commit()
     await db.refresh(event)
     
@@ -188,8 +255,25 @@ async def delete_event(db: AsyncSession, event_id: str, user_id: str) -> bool:
     
     # 先获取数据用于通知
     event_data = _event_to_dict(event)
+    event_uuid = event.id  # 保存 ID 用于同步记录
     
     await db.delete(event)
+    await db.flush()
+    
+    # 创建同步记录（用于增量同步）
+    now = datetime.now(timezone.utc)
+    sync_record = SyncRecord(
+        id=uuid4(),
+        user_id=UUID(user_id),
+        entity_type="event",
+        entity_id=event_uuid,
+        client_id=None,
+        action="delete",
+        payload={"id": str(event_uuid)},  # 删除时只存 ID
+        client_modified_at=now,
+        server_modified_at=now
+    )
+    db.add(sync_record)
     await db.commit()
     
     # WebSocket 实时推送
@@ -214,6 +298,8 @@ def _event_to_dict(event: Event) -> dict:
         "end_time": event.end_time.isoformat() if event.end_time else None,
         "location": event.location,
         "status": event.status,
+        "type": event.type,  # 新增
+        "priority": event.priority,  # 新增
         "created_at": event.created_at.isoformat() if event.created_at else None,
         "updated_at": event.updated_at.isoformat() if event.updated_at else None
     }

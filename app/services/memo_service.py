@@ -1,8 +1,10 @@
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, and_, func
-from uuid import UUID
+from uuid import UUID, uuid4
+from datetime import datetime, timezone
 
 from app.models.memo import Memo
+from app.models.sync_record import SyncRecord
 from app import schemas
 from app.core.websocket import notify_data_change
 
@@ -64,12 +66,31 @@ async def create_memo(
     Returns:
         创建的备忘录对象
     """
+    now = datetime.now(timezone.utc)
     db_memo = Memo(
         user_id=UUID(user_id),
         content=memo_in.content,
         tags=memo_in.tags or []
     )
     db.add(db_memo)
+    await db.flush()
+    
+    # 创建同步记录（用于增量同步）
+    sync_record = SyncRecord(
+        id=uuid4(),
+        user_id=UUID(user_id),
+        entity_type="memo",
+        entity_id=db_memo.id,
+        client_id=None,
+        action="create",
+        payload={
+            "content": memo_in.content,
+            "tags": memo_in.tags or []
+        },
+        client_modified_at=now,
+        server_modified_at=now
+    )
+    db.add(sync_record)
     await db.commit()
     await db.refresh(db_memo)
     
@@ -112,6 +133,25 @@ async def update_memo(
     for field, value in update_data.items():
         setattr(memo, field, value)
     
+    await db.flush()
+    
+    # 创建同步记录（用于增量同步）
+    now = datetime.now(timezone.utc)
+    sync_record = SyncRecord(
+        id=uuid4(),
+        user_id=UUID(user_id),
+        entity_type="memo",
+        entity_id=memo.id,
+        client_id=None,
+        action="update",
+        payload={
+            "id": str(memo.id),
+            **update_data
+        },
+        client_modified_at=now,
+        server_modified_at=now
+    )
+    db.add(sync_record)
     await db.commit()
     await db.refresh(memo)
     
@@ -140,8 +180,25 @@ async def delete_memo(db: AsyncSession, memo_id: str, user_id: str) -> bool:
     
     # 先获取数据用于通知
     memo_data = _memo_to_dict(memo)
+    memo_uuid = memo.id
     
     await db.delete(memo)
+    await db.flush()
+    
+    # 创建同步记录（用于增量同步）
+    now = datetime.now(timezone.utc)
+    sync_record = SyncRecord(
+        id=uuid4(),
+        user_id=UUID(user_id),
+        entity_type="memo",
+        entity_id=memo_uuid,
+        client_id=None,
+        action="delete",
+        payload={"id": str(memo_uuid)},
+        client_modified_at=now,
+        server_modified_at=now
+    )
+    db.add(sync_record)
     await db.commit()
     
     # WebSocket 实时推送
