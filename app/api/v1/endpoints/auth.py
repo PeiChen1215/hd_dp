@@ -1,5 +1,4 @@
 from fastapi import APIRouter, HTTPException, Depends, status
-from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import get_db
@@ -34,11 +33,11 @@ async def register(
 
 @router.post("/login", response_model=schemas.Token)
 async def login(
-    form_data: OAuth2PasswordRequestForm = Depends(),
+    payload: schemas.UserCreate,
     db: AsyncSession = Depends(get_db)
 ):
     """
-    用户登录（OAuth2 密码模式）
+    用户登录（JSON 格式）
     
     - **username**: 用户名
     - **password**: 密码
@@ -48,7 +47,7 @@ async def login(
     """
     try:
         user, access_token = await auth_service.login_user(
-            db, form_data.username, form_data.password
+            db, payload.username, payload.password
         )
         return {
             "access_token": access_token,

@@ -70,9 +70,9 @@ async def create_event(
     return event_to_dict(event)
 
 
-@router.get("/{event_id}")
+@router.get("/{serverId}")
 async def get_event(
-    event_id: str,
+    serverId: str,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
@@ -81,7 +81,7 @@ async def get_event(
     """
     event = await event_service.get_event_by_id(
         db=db,
-        event_id=event_id,
+        event_id=serverId,
         user_id=str(current_user.id)
     )
     
@@ -94,9 +94,9 @@ async def get_event(
     return event_to_dict(event)
 
 
-@router.put("/{event_id}")
+@router.put("/{serverId}")
 async def update_event(
-    event_id: str,
+    serverId: str,
     payload: schemas.EventUpdate,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user)
@@ -106,7 +106,7 @@ async def update_event(
     """
     event = await event_service.update_event(
         db=db,
-        event_id=event_id,
+        event_id=serverId,
         user_id=str(current_user.id),
         event_in=payload
     )
@@ -120,18 +120,31 @@ async def update_event(
     return event_to_dict(event)
 
 
-@router.patch("/{event_id}/status")
+class StatusUpdateRequest:
+    """状态更新请求模型"""
+    def __init__(self, status: str):
+        self.status = status
+
+
+@router.patch("/{serverId}/status")
 async def update_event_status(
-    event_id: str,
-    status: str,
+    serverId: str,
+    payload: dict,  # 接收 JSON body
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
     """
     更新日程状态
     
-    可选状态: pending, completed, cancelled
+    请求体: {"status": "pending|completed|cancelled"}
     """
+    status = payload.get("status")
+    if not status:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Missing 'status' field in request body"
+        )
+    
     # 验证状态值
     valid_statuses = ["pending", "completed", "cancelled"]
     if status not in valid_statuses:
@@ -142,7 +155,7 @@ async def update_event_status(
     
     event = await event_service.update_event_status(
         db=db,
-        event_id=event_id,
+        event_id=serverId,
         user_id=str(current_user.id),
         status=status
     )
@@ -156,9 +169,9 @@ async def update_event_status(
     return event_to_dict(event)
 
 
-@router.delete("/{event_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete("/{serverId}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_event(
-    event_id: str,
+    serverId: str,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
@@ -167,7 +180,7 @@ async def delete_event(
     """
     success = await event_service.delete_event(
         db=db,
-        event_id=event_id,
+        event_id=serverId,
         user_id=str(current_user.id)
     )
     

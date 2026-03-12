@@ -62,9 +62,9 @@ async def create_memo(
     return memo_to_dict(memo)
 
 
-@router.get("/{memo_id}")
+@router.get("/{serverId}")
 async def get_memo(
-    memo_id: str,
+    serverId: str,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
@@ -73,7 +73,7 @@ async def get_memo(
     """
     memo = await memo_service.get_memo_by_id(
         db=db,
-        memo_id=memo_id,
+        memo_id=serverId,
         user_id=str(current_user.id)
     )
     
@@ -86,9 +86,9 @@ async def get_memo(
     return memo_to_dict(memo)
 
 
-@router.put("/{memo_id}")
+@router.put("/{serverId}")
 async def update_memo(
-    memo_id: str,
+    serverId: str,
     payload: schemas.MemoUpdate,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user)
@@ -98,7 +98,7 @@ async def update_memo(
     """
     memo = await memo_service.update_memo(
         db=db,
-        memo_id=memo_id,
+        memo_id=serverId,
         user_id=str(current_user.id),
         memo_in=payload
     )
@@ -112,9 +112,9 @@ async def update_memo(
     return memo_to_dict(memo)
 
 
-@router.delete("/{memo_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete("/{serverId}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_memo(
-    memo_id: str,
+    serverId: str,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
@@ -123,7 +123,7 @@ async def delete_memo(
     """
     success = await memo_service.delete_memo(
         db=db,
-        memo_id=memo_id,
+        memo_id=serverId,
         user_id=str(current_user.id)
     )
     
