@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: ChronoSync API
-  version: '1.0.0'
+  version: '1.1.0'
   description: |
     ChronoSync 个人智能助手后端 API
     
@@ -11,6 +11,38 @@ info:
     1. **增量同步**: 通过 `/sync/pull` 和 `/sync/push` 实现增量数据同步
     2. **实时推送**: WebSocket 连接用于实时接收数据变更（多设备同步）
     3. **冲突解决**: 当多设备同时修改时，通过 `last_synced_at` 检测冲突
+    
+    ## AI Agent 智能助手（万机）
+    
+    ### 支持的指令
+    - **创建日程**: "帮我安排明天下午3点的会议"
+    - **查询日程（单日）**: "明天有什么安排"
+    - **查询日程（多日）**: "这两天有什么安排"、"最近3天的日程"、"本周安排"
+    - **修改日程**: "把会议改到后天4点"
+    - **删除日程**: "删除明天的会议"
+    - **创建备忘**: "记住买牛奶"
+    - **查询备忘**: "查看我的备忘录"
+    - **统计信息**: "我有多少条日程"
+    
+    ### 支持的时间表达
+    - **相对日期**: 今天、明天、后天、大后天、昨天、N天后/前
+    - **周表达**: 本周、下周、周一周二...
+    - **范围表达**: 这两天、这几天、最近N天、未来N天
+    - **具体时间**: 下午3点、15:00、3月22日14:00
+    
+    ### 建议时段确认流程
+    当创建/修改日程发生冲突时，Agent 会返回建议时段：
+    ```
+    用户: 帮我安排明天下午3点的会议
+    Agent: 时间冲突！已有日程：xxx。建议改到：2026-03-14 16:00
+           是否使用建议时间？回复"可以"或"确定"即可安排。
+    用户: 可以
+    Agent: 已按建议时间创建日程：会议，时间：2026-03-14 16:00
+    ```
+    
+    ### 对话历史
+    - `GET /api/v1/agent/conversations` - 获取对话历史
+    - `DELETE /api/v1/agent/conversations` - 清空对话历史
     
     ## WebSocket 实时通信
     
@@ -385,6 +417,8 @@ paths:
         - "明天下午3点开会" → 创建日程
         - "把下周二的会推迟一小时" → 更新日程
         - "删除所有已完成的备忘录" → 批量删除
+        - "这两天有什么安排" → 范围查询
+        - "可以" → 确认使用建议时间
       tags:
         - AI Agent
       security:
@@ -402,6 +436,56 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/AgentResponse'
+
+  /api/v1/agent/conversations:
+    get:
+      summary: 获取 Agent 对话历史
+      description: |
+        获取当前用户与万机 Agent 的对话历史记录。
+        按时间倒序返回，最新的对话在前面。
+        用于前端展示聊天历史。
+      tags:
+        - AI Agent
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: query
+          name: limit
+          schema:
+            type: integer
+            default: 20
+            minimum: 1
+            maximum: 100
+          description: 返回条数
+        - in: query
+          name: offset
+          schema:
+            type: integer
+            default: 0
+            minimum: 0
+          description: 偏移量
+      responses:
+        '200':
+          description: 对话历史列表
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AgentConversationList'
+
+    delete:
+      summary: 清空 Agent 对话历史
+      description: 清空当前用户的所有 Agent 对话记录
+      tags:
+        - AI Agent
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: 清空成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AgentConversationClearResponse'
 
   # ========== RAG 聊天接口 ==========
   /api/v1/chat:
@@ -795,11 +879,18 @@ components:
       properties:
         action:
           type: string
-          enum: [create, update, delete, query, none]
-          description: 执行的操作类型
+          enum: [create, update, delete, query, none, error]
+          description: |
+            执行的操作类型：
+            - create: 创建操作
+            - update: 更新操作
+            - delete: 删除操作
+            - query: 查询操作
+            - none: 无操作（如闲聊）
+            - error: 处理出错
         entity:
           type: string
-          enum: [event, memo]
+          enum: [event, memo, time, none]
           description: 操作的目标实体
         data:
           type: object
@@ -808,6 +899,63 @@ components:
           type: string
           description: 自然语言回复
           example: 已为您将会议推迟到下午4点
+
+    AgentConversation:
+      type: object
+      description: 单条对话记录
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: 对话记录ID
+        user_id:
+          type: string
+          format: uuid
+          description: 用户ID
+        role:
+          type: string
+          enum: [user, assistant]
+          description: 角色（用户或助手）
+        content:
+          type: string
+          description: 对话内容
+        created_at:
+          type: string
+          format: date-time
+          description: 创建时间
+      required: [id, user_id, role, content, created_at]
+
+    AgentConversationList:
+      type: object
+      description: 对话历史列表
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/AgentConversation'
+          description: 对话记录列表
+        total:
+          type: integer
+          description: 总条数
+      required: [items, total]
+
+    AgentConversationClearResponse:
+      type: object
+      description: 清空对话历史响应
+      properties:
+        status:
+          type: string
+          example: success
+          description: 状态
+        message:
+          type: string
+          example: 已清空 20 条对话记录
+          description: 提示信息
+        deleted_count:
+          type: integer
+          example: 20
+          description: 删除的记录数
+      required: [status, message, deleted_count]
 
     # ========== RAG 相关 ==========
     ChatRequest:

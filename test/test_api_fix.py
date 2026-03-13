@@ -19,7 +19,7 @@ from datetime import datetime, timedelta, timezone
 
 import httpx
 
-BASE_URL = "http://localhost:8000"
+BASE_URL = "http://115.190.155.26:8000"
 API_PREFIX = "/api/v1"
 
 TEST_USERNAME = f"test_fix_{uuid.uuid4().hex[:8]}"

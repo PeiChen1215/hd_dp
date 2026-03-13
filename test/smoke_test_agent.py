@@ -5,7 +5,8 @@
 
 使用方法:
     1. 确保后端服务已启动: uvicorn app.main:app --reload
-    2. 运行测试: python smoke_test_agent.py
+    2. 确保配置了 DASHSCOPE_API_KEY 环境变量
+    3. 运行测试: python test/smoke_test_agent.py
 
 注意: 此测试会调用真实的 DeepSeek API，产生少量费用
 """
@@ -18,7 +19,7 @@ from datetime import datetime, timedelta
 import httpx
 
 # 配置
-BASE_URL = "http://localhost:8000"
+BASE_URL = "http://115.190.155.26:8000"
 API_PREFIX = "/api/v1"
 
 # 测试用户（随机，避免重复）
@@ -35,17 +36,39 @@ memo_id = None
 async def check_api_key():
     """检查是否配置了 DeepSeek API Key"""
     print("\n[0/7] 检查环境变量...")
+    
+    # 检查环境变量（后端实际使用的）
+    import os
+    api_key = os.getenv('DASHSCOPE_API_KEY', '')
+    
+    if api_key and api_key.startswith('sk-'):
+        print(f"✅ 环境变量 DASHSCOPE_API_KEY 已配置")
+        print(f"   Key: {api_key[:15]}...")
+        return True
+    
+    # 检查 .env 文件
     try:
-        with open('.env', 'r') as f:
-            content = f.read()
-            if 'DASHSCOPE_API_KEY' in content and 'sk-' in content:
-                print("✅ 找到 DASHSCOPE_API_KEY 配置")
-                return True
-    except FileNotFoundError:
+        env_paths = ['.env', '../.env', '../../.env']
+        for env_path in env_paths:
+            if os.path.exists(env_path):
+                with open(env_path, 'r') as f:
+                    content = f.read()
+                    if 'DASHSCOPE_API_KEY' in content:
+                        for line in content.split('\n'):
+                            if line.startswith('DASHSCOPE_API_KEY='):
+                                key = line.split('=', 1)[1].strip()
+                                if key and key.startswith('sk-'):
+                                    print(f"✅ 在 {env_path} 中找到 DASHSCOPE_API_KEY")
+                                    print(f"   Key: {key[:15]}...")
+                                    # 设置到环境变量供测试使用
+                                    os.environ['DASHSCOPE_API_KEY'] = key
+                                    return True
+    except Exception:
         pass
     
-    print("⚠️ 警告: 未在 .env 中找到 DASHSCOPE_API_KEY")
-    print("   Agent 功能可能无法正常工作")
+    print("⚠️ 警告: 未找到 DASHSCOPE_API_KEY")
+    print("   请确保后端服务器已配置此环境变量")
+    print("   Agent 功能将无法正常工作")
     return False
 
 
@@ -76,10 +99,11 @@ async def test_login():
     global access_token, user_id
     
     async with httpx.AsyncClient() as client:
-        # 使用 form-data 格式（OAuth2 标准）
+        # 使用 JSON 格式（与注册一致）
         response = await client.post(
             f"{BASE_URL}{API_PREFIX}/auth/login",
-            data={"username": TEST_USERNAME, "password": TEST_PASSWORD}  # 注意是 data 不是 json
+            headers={"Content-Type": "application/json"},
+            json={"username": TEST_USERNAME, "password": TEST_PASSWORD}
         )
         
         if response.status_code == 200:
@@ -223,7 +247,7 @@ async def run_tests():
     
     try:
         # 检查配置
-        await check_api_key()
+        has_api_key = await check_api_key()
         
         # 基础测试
         results.append(("注册", await test_register()))
@@ -239,11 +263,14 @@ async def run_tests():
             return
         
         # Agent 功能测试
-        results.append(("创建日程", await test_agent_create_event()))
-        results.append(("查询日程", await test_agent_query_event()))
-        results.append(("创建备忘", await test_agent_create_memo()))
-        results.append(("查询备忘", await test_agent_query_memo()))
-        results.append(("统计功能", await test_agent_statistics()))
+        if has_api_key:
+            results.append(("创建日程", await test_agent_create_event()))
+            results.append(("查询日程", await test_agent_query_event()))
+            results.append(("创建备忘", await test_agent_create_memo()))
+            results.append(("查询备忘", await test_agent_query_memo()))
+            results.append(("统计功能", await test_agent_statistics()))
+        else:
+            print("\n⚠️ 跳过 Agent 测试（未配置 API Key）")
         
     except Exception as e:
         print(f"\n❌ 测试过程中发生错误: {e}")
@@ -264,10 +291,12 @@ async def run_tests():
     
     print(f"\n总计: {passed}/{total} 通过")
     
-    if passed == total:
+    if passed == total and total > 0:
         print("🎉 所有测试通过！Agent 工作正常")
+    elif not has_api_key:
+        print("⚠️ 未配置 DASHSCOPE_API_KEY，Agent 测试已跳过")
     else:
-        print("⚠️  部分测试失败，请检查日志")
+        print("⚠️ 部分测试失败，请检查日志")
     
     print("=" * 60)
 

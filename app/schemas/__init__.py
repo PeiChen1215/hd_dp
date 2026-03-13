@@ -2,6 +2,13 @@
 from .auth import UserCreate, UserOut, Token, TokenPayload
 from .event import EventCreate, EventUpdate, EventOut, EventList
 from .memo import MemoCreate, MemoUpdate, MemoOut, MemoList
+from .agent import AgentRequest, AgentResponse
+from .agent_conversation import (
+    AgentConversationCreate,
+    AgentConversationOut,
+    AgentConversationList,
+    AgentConversationClearResponse,
+)
 from .misc import (
     Provider,
     # 旧版同步
@@ -31,6 +38,13 @@ __all__ = [
     "MemoUpdate",
     "MemoOut",
     "MemoList",
+    # Agent 相关
+    "AgentRequest",
+    "AgentResponse",
+    "AgentConversationCreate",
+    "AgentConversationOut",
+    "AgentConversationList",
+    "AgentConversationClearResponse",
     "Provider",
     # 同步相关
     "SyncRequest",
