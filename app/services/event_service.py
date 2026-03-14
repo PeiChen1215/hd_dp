@@ -2,12 +2,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, and_, func
 from sqlalchemy.orm import selectinload
 from uuid import UUID, uuid4
-from datetime import datetime, timezone
+from datetime import datetime
 
 from app.models.event import Event
 from app.models.sync_record import SyncRecord
 from app import schemas
 from app.core.websocket import notify_data_change
+from app.core.timezone import get_beijing_time
 
 
 async def get_event_by_id(db: AsyncSession, event_id: str, user_id: str) -> Event | None:
@@ -77,7 +78,7 @@ async def create_event(
     Returns:
         创建的日程对象
     """
-    now = datetime.now(timezone.utc)
+    now = get_beijing_time()
     db_event = Event(
         user_id=UUID(user_id),
         title=event_in.title,
@@ -159,7 +160,7 @@ async def update_event(
     await db.flush()
     
     # 创建同步记录（用于增量同步）
-    now = datetime.now(timezone.utc)
+    now = get_beijing_time()
     sync_record = SyncRecord(
         id=uuid4(),
         user_id=UUID(user_id),
@@ -211,7 +212,7 @@ async def update_event_status(
     await db.flush()
     
     # 创建同步记录（用于增量同步）
-    now = datetime.now(timezone.utc)
+    now = get_beijing_time()
     sync_record = SyncRecord(
         id=uuid4(),
         user_id=UUID(user_id),
@@ -261,7 +262,7 @@ async def delete_event(db: AsyncSession, event_id: str, user_id: str) -> bool:
     await db.flush()
     
     # 创建同步记录（用于增量同步）
-    now = datetime.now(timezone.utc)
+    now = get_beijing_time()
     sync_record = SyncRecord(
         id=uuid4(),
         user_id=UUID(user_id),

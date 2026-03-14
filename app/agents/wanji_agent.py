@@ -488,31 +488,26 @@ class WanjiAgent(BaseAgent):
     # ============ 时间解析工具方法（整合 wanji2 的增强功能） ============
     
     def _parse_time(self, time_str: str) -> datetime:
-        """解析时间（增强版）"""
+        """解析时间（增强版）- 修复日期时间连接问题"""
         if isinstance(time_str, datetime):
             return time_str
         if not time_str:
             return get_beijing_time()
         
         now = get_beijing_time()
-        time_str = str(time_str).strip()
+        original_str = str(time_str).strip()
         
-        # 处理相对日期词
-        ref_date = self._get_reference_date_from_text(time_str)
+        # 处理相对日期词，获取参考日期
+        ref_date = self._get_reference_date_from_text(original_str)
         
-        # 处理时间格式
-        time_str = time_str.replace('点', ':').replace('：', ':')
-        
-        # 处理上午/下午/晚上
+        # 标记是否是下午/晚上
         is_pm = False
-        if '下午' in time_str or '晚上' in time_str or '晚' in time_str:
+        if '下午' in original_str or '晚上' in original_str or '晚' in original_str:
             is_pm = True
-            time_str = re.sub(r'下午|晚上|晚', '', time_str).strip()
-        if '上午' in time_str or '早上' in time_str or '早' in time_str:
-            time_str = re.sub(r'上午|早上|早', '', time_str).strip()
         
-        # 替换相对日期为具体日期
-        replacements = {
+        # 第一步：先替换相对日期词，确保在日期后加空格
+        time_str = original_str
+        date_replacements = {
             r'今天': now.strftime('%Y-%m-%d'),
             r'明天': (now + timedelta(days=1)).strftime('%Y-%m-%d'),
             r'后天': (now + timedelta(days=2)).strftime('%Y-%m-%d'),
@@ -522,21 +517,42 @@ class WanjiAgent(BaseAgent):
             r'下周': (now + timedelta(days=7)).strftime('%Y-%m-%d'),
         }
         
-        for pattern, replacement in replacements.items():
-            time_str = re.sub(pattern, replacement, time_str)
+        for pattern, replacement in date_replacements.items():
+            if re.search(pattern, time_str):
+                # 在替换的日期后加空格，防止和时间连在一起
+                time_str = re.sub(pattern, replacement + ' ', time_str)
         
         # 处理 "N天后/前"
         m_after = re.search(r'(\d+)\s*天后', time_str)
         if m_after:
             days = int(m_after.group(1))
             date_str = (now + timedelta(days=days)).strftime('%Y-%m-%d')
-            time_str = re.sub(r'\d+\s*天后', date_str, time_str)
+            time_str = re.sub(r'\d+\s*天后', date_str + ' ', time_str)
         
         m_before = re.search(r'(\d+)\s*天前', time_str)
         if m_before:
             days = int(m_before.group(1))
             date_str = (now - timedelta(days=days)).strftime('%Y-%m-%d')
-            time_str = re.sub(r'\d+\s*天前', date_str, time_str)
+            time_str = re.sub(r'\d+\s*天前', date_str + ' ', time_str)
+        
+        # 第二步：处理上午/下午/晚上标记（只移除文字，保留数字）
+        time_str = re.sub(r'上午|早上|早', '', time_str)
+        time_str = re.sub(r'下午|晚上|晚', '', time_str)
+        
+        # 第三步：处理时间格式，将中文时间转换为数字时间
+        # 匹配 "3点" 或 "3:00" 或 "15:00"
+        # 将 "3点" 替换为 "3:00"
+        def replace_time_format(match):
+            hour = match.group(1)
+            minute = match.group(2) if match.group(2) else '00'
+            return f'{hour}:{minute}'
+        
+        # 处理 "X点" 或 "X点Y分" 格式
+        time_str = re.sub(r'(\d{1,2})点(?:(\d{1,2})分?)?', replace_time_format, time_str)
+        time_str = time_str.replace('：', ':')
+        
+        # 清理多余空格
+        time_str = ' '.join(time_str.split())
         
         # 解析时间
         try:
@@ -546,14 +562,22 @@ class WanjiAgent(BaseAgent):
                 default_dt = ref_date.replace(hour=0, minute=0, second=0)
                 dt = parser.parse(time_str, default=default_dt)
             
+            # 处理下午/晚上：如果小时小于12，加12小时
             if is_pm and dt.hour < 12:
-                dt = dt + timedelta(hours=12)
+                dt = dt.replace(hour=dt.hour + 12)
             
             return dt
-        except Exception:
-            # 备用解析
-            combined = f"{ref_date.date().isoformat()} {time_str}"
-            return parser.parse(combined, fuzzy=True)
+        except Exception as e:
+            # 备用解析：直接用参考日期+原始字符串模糊解析
+            try:
+                combined = f"{ref_date.date().isoformat()} {original_str}"
+                dt = parser.parse(combined, fuzzy=True)
+                if is_pm and dt.hour < 12:
+                    dt = dt.replace(hour=dt.hour + 12)
+                return dt
+            except:
+                # 最后尝试：返回参考日期的中午12点
+                return ref_date.replace(hour=12, minute=0, second=0)
     
     def _get_reference_date_from_text(self, text: str) -> datetime:
         """从文本中获取参考日期（北京时间）"""
@@ -723,11 +747,13 @@ class WanjiAgent(BaseAgent):
         return list(result.scalars().all())
     
     async def _save_conversation(self, role: str, content: str):
-        """保存对话记录到数据库"""
+        """保存对话记录到数据库（使用北京时间）"""
+        from app.core.timezone import get_beijing_time
         conv = AgentConversation(
             user_id=self.user_id,
             role=role,
-            content=content
+            content=content,
+            created_at=get_beijing_time()
         )
         self.db.add(conv)
         await self.db.commit()
