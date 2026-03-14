@@ -157,13 +157,20 @@ class WanjiAgent(BaseAgent):
                 conflicts = await self._detect_conflict(start_dt, end_dt)
                 if conflicts:
                     suggestion = await self._find_next_slot(start_dt, int((end_dt - start_dt).total_seconds() / 60))
-                    conflict_info = f"时间冲突！已有日程：{conflicts[0].title} ({conflicts[0].start_time.strftime('%m-%d %H:%M')})"
+                    conflict_time = self._format_beijing_time(conflicts[0].start_time, '%m-%d %H:%M')
+                    conflict_info = f"时间冲突！已有日程：{conflicts[0].title} ({conflict_time})"
                     if suggestion:
                         conflict_info += f"\n💡 建议改到：{suggestion}\n是否使用建议时间？回复'可以'或'确定'即可安排。"
                     return conflict_info
                 
                 event = await event_service.create_event(self.db, self.user_id, event_in)
-                return f"✅ 已创建日程：{event.title}，时间：{event.start_time.strftime('%Y-%m-%d %H:%M')}"
+                # 转换为北京时间显示
+                beijing_start = event.start_time
+                if beijing_start.tzinfo is None:
+                    # 如果无时区信息，假设是 UTC，转换为北京时间
+                    from pytz import utc
+                    beijing_start = utc.localize(beijing_start).astimezone(timezone('Asia/Shanghai'))
+                return f"✅ 已创建日程：{event.title}，时间：{beijing_start.strftime('%Y-%m-%d %H:%M')}（北京时间）"
                 
             except Exception as e:
                 return f"❌ 创建失败：{str(e)}"
@@ -231,7 +238,8 @@ class WanjiAgent(BaseAgent):
                     conflicts = await self._detect_conflict_excluding(check_start, check_end, str(target.id))
                     if conflicts:
                         suggestion = await self._find_next_slot(check_start, int((check_end - check_start).total_seconds() / 60))
-                        conflict_info = f"时间冲突！已有日程：{conflicts[0].title}"
+                        conflict_time = self._format_beijing_time(conflicts[0].start_time, '%m-%d %H:%M')
+                        conflict_info = f"时间冲突！已有日程：{conflicts[0].title} ({conflict_time})"
                         if suggestion:
                             conflict_info += f"\n💡 建议改到：{suggestion}\n是否使用建议时间？回复'可以'或'确定'即可修改。"
                         return conflict_info
@@ -256,8 +264,9 @@ class WanjiAgent(BaseAgent):
                 lines = [f"📅 {self._format_date_desc(date)} 共有 {total} 项安排："]
                 for i, event in enumerate(events, 1):
                     status_icon = "✅" if event.status == "completed" else "⏳"
-                    end_str = event.end_time.strftime('%H:%M') if event.end_time else '?'
-                    lines.append(f"{i}. {status_icon} {event.title} ({event.start_time.strftime('%H:%M')}-{end_str})")
+                    start_str = self._format_beijing_time(event.start_time, '%H:%M')
+                    end_str = self._format_beijing_time(event.end_time, '%H:%M') if event.end_time else '?'
+                    lines.append(f"{i}. {status_icon} {event.title} ({start_str}-{end_str})")
                 
                 return "\n".join(lines)
                 
@@ -294,8 +303,9 @@ class WanjiAgent(BaseAgent):
                     lines.append(f"\n{date_key} ({weekday})：")
                     for event in grouped[date_key]:
                         status_icon = "✅" if event.status == "completed" else "⏳"
-                        end_str = event.end_time.strftime('%H:%M') if event.end_time else '?'
-                        lines.append(f"  {status_icon} {event.title} ({event.start_time.strftime('%H:%M')}-{end_str})")
+                        start_str = self._format_beijing_time(event.start_time, '%H:%M')
+                        end_str = self._format_beijing_time(event.end_time, '%H:%M') if event.end_time else '?'
+                        lines.append(f"  {status_icon} {event.title} ({start_str}-{end_str})")
                 
                 return "\n".join(lines)
                 
@@ -653,6 +663,22 @@ class WanjiAgent(BaseAgent):
             return "后天"
         return date_desc
     
+    def _convert_to_beijing(self, dt: datetime) -> datetime:
+        """将时间转换为北京时间"""
+        if dt is None:
+            return None
+        if dt.tzinfo is None:
+            # 无时区信息，假设是 UTC，转换为北京时间
+            from pytz import utc
+            return utc.localize(dt).astimezone(timezone('Asia/Shanghai'))
+        # 有时区信息，直接转换
+        return dt.astimezone(timezone('Asia/Shanghai'))
+    
+    def _format_beijing_time(self, dt: datetime, fmt: str = '%Y-%m-%d %H:%M') -> str:
+        """格式化北京时间为字符串"""
+        beijing_dt = self._convert_to_beijing(dt)
+        return beijing_dt.strftime(fmt) if beijing_dt else '?'
+    
     async def _detect_conflict(self, start_time: datetime, end_time: Optional[datetime]) -> list:
         """检测冲突"""
         if not end_time:
@@ -680,6 +706,7 @@ class WanjiAgent(BaseAgent):
             new_end = new_start + timedelta(minutes=duration_minutes)
             conflicts = await self._detect_conflict(new_start, new_end)
             if not conflicts:
+                # 确保返回北京时间字符串
                 return new_start.strftime("%Y-%m-%d %H:%M")
         return None
     
@@ -828,7 +855,12 @@ class WanjiAgent(BaseAgent):
                     end_time=suggested_dt + timedelta(hours=1)
                 )
                 event = await event_service.create_event(self.db, self.user_id, event_in)
-                reply = f"✅ 已按建议时间创建日程：{event.title}，时间：{event.start_time.strftime('%Y-%m-%d %H:%M')}"
+                # 转换为北京时间显示
+                beijing_start = event.start_time
+                if beijing_start.tzinfo is None:
+                    from pytz import utc
+                    beijing_start = utc.localize(beijing_start).astimezone(timezone('Asia/Shanghai'))
+                reply = f"✅ 已按建议时间创建日程：{event.title}，时间：{beijing_start.strftime('%Y-%m-%d %H:%M')}（北京时间）"
             else:
                 # 修改日程（需要找到原日程）
                 reply = "请重新输入完整的修改指令，如：把[日程标题]改到建议时间"
