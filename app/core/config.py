@@ -20,6 +20,9 @@ class Settings(BaseSettings):
     DASHSCOPE_API_KEY: str = ""
     DASHSCOPE_API_BASE: str = "https://dashscope.aliyuncs.com/compatible-mode/v1"
     DASHSCOPE_MODEL: str = "deepseek-v3"
+    
+    # 时区配置（默认为北京时间）
+    TIMEZONE: str = "Asia/Shanghai"
 
     class Config:
         env_file = ".env"

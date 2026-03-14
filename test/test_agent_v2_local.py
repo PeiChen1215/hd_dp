@@ -24,7 +24,7 @@ from datetime import datetime, timedelta, timezone
 import httpx
 
 # 本地服务器配置
-BASE_URL = "http://localhost:8000"
+BASE_URL = "http://115.190.155.26:8000"
 API_PREFIX = "/api/v1"
 TIMEOUT = 60.0  # Agent 调用可能需要较长时间
 

@@ -12,7 +12,8 @@ import json
 import re
 from datetime import datetime, timedelta
 from typing import Optional, Dict, Any, List, Tuple
-from dateutil import parser
+from dateutil import parser, tz
+from pytz import timezone
 
 from langchain_openai import ChatOpenAI
 from langchain_core.tools import StructuredTool
@@ -27,6 +28,24 @@ from app import schemas
 from app.services import event_service, memo_service
 from app.agents.base import BaseAgent
 from app.models.agent_conversation import AgentConversation
+
+
+# ============ 时区工具函数 ============
+
+def get_beijing_time() -> datetime:
+    """获取当前北京时间"""
+    beijing_tz = timezone('Asia/Shanghai')
+    return datetime.now(beijing_tz)
+
+
+def get_beijing_date_str() -> str:
+    """获取当前北京日期字符串"""
+    return get_beijing_time().strftime('%Y-%m-%d')
+
+
+def get_beijing_datetime_str() -> str:
+    """获取当前北京日期时间字符串"""
+    return get_beijing_time().strftime('%Y-%m-%d %H:%M:%S')
 
 
 # ============ 工具输入模型定义 ============
@@ -317,7 +336,7 @@ class WanjiAgent(BaseAgent):
         async def statistics(query: str) -> str:
             """统计"""
             try:
-                now = datetime.now()
+                now = get_beijing_time()
                 
                 if "上周" in query or "last week" in query.lower():
                     start = now - timedelta(days=now.weekday() + 7)
@@ -404,18 +423,26 @@ class WanjiAgent(BaseAgent):
     def _create_agent(self):
         """创建 ReAct Agent（LangGraph）"""
         
+        beijing_now = get_beijing_time()
+        weekdays = ['周一', '周二', '周三', '周四', '周五', '周六', '周日']
+        weekday_str = weekdays[beijing_now.weekday()]
+        
         system_prompt = f"""你是一个智能日程助手，名字叫"万机"。
 
-当前系统日期: {datetime.now().strftime('%Y-%m-%d')}
+## 当前系统时间（北京时间）
+当前日期: {beijing_now.strftime('%Y-%m-%d')}
+当前时间: {beijing_now.strftime('%H:%M:%S')}
+今天是: {weekday_str}
+时区: 北京时间 (UTC+8)
 
-你的能力：
+## 你的能力
 - 理解中英文自然语言
 - 自动解析时间（支持相对时间如"明天下午3点"、"大后天"、"3天后"、"本周"、"下周"）
 - 管理用户的日程和备忘录
 - 冲突检测和智能建议
 - 支持单日查询和多日范围查询
 
-工具使用规则：
+## 工具使用规则
 1. 当用户想要创建日程时，调用 add_schedule 工具
 2. 当用户想要删除日程时，调用 delete_schedule 工具
 3. 当用户想要修改日程时，调用 update_schedule 工具
@@ -425,14 +452,16 @@ class WanjiAgent(BaseAgent):
 7. 当用户想要查询备忘录时，调用 query_memo 工具
 8. 当用户问统计问题时，调用 statistics 工具
 
-时间解析增强：
+## 时间解析增强（基于北京时间）
+- "今天" → {beijing_now.strftime('%Y-%m-%d')}
 - "明天"、"后天"、"大后天" → 相对今天
 - "N天后"、"N天前" → 相对今天加减N天
 - "本周" → 本周一至周日
 - "下周" → 下周一至周日
 - "这两天"、"这几天" → 今天起2-3天
 
-重要：
+## 重要
+- 所有时间均使用北京时间（UTC+8）
 - 不要要求用户提供 JSON，从自然语言中解析字段
 - 时间可以是自然语言（如"明天下午3点"）或 ISO 8601 格式
 - 如果用户输入的时间不明确，请询问确认
@@ -453,9 +482,9 @@ class WanjiAgent(BaseAgent):
         if isinstance(time_str, datetime):
             return time_str
         if not time_str:
-            return datetime.now()
+            return get_beijing_time()
         
-        now = datetime.now()
+        now = get_beijing_time()
         time_str = str(time_str).strip()
         
         # 处理相对日期词
@@ -517,8 +546,8 @@ class WanjiAgent(BaseAgent):
             return parser.parse(combined, fuzzy=True)
     
     def _get_reference_date_from_text(self, text: str) -> datetime:
-        """从文本中获取参考日期"""
-        today = datetime.now()
+        """从文本中获取参考日期（北京时间）"""
+        today = get_beijing_time()
         if not text:
             return today
         
@@ -558,8 +587,8 @@ class WanjiAgent(BaseAgent):
         return today
     
     def _parse_date_range(self, date_desc: str) -> Tuple[datetime, datetime]:
-        """解析日期范围（整合 wanji2 的多日查询）"""
-        now = datetime.now()
+        """解析日期范围（整合 wanji2 的多日查询，北京时间）"""
+        now = get_beijing_time()
         date_desc = str(date_desc).strip()
         
         # 处理多日表达
@@ -823,15 +852,15 @@ class WanjiAgent(BaseAgent):
             }
     
     def _handle_quick_queries(self, text: str) -> Optional[str]:
-        """处理快速查询（不需要调用 LLM）"""
+        """处理快速查询（不需要调用 LLM，北京时间）"""
         # 当前时间
         if re.search(r"现在.*(几点|时间)|几点了|现在是几点", text):
-            now = datetime.now()
-            return f"现在时间是 {now.strftime('%Y-%m-%d %H:%M:%S')}"
+            now = get_beijing_time()
+            return f"现在时间是 {now.strftime('%Y-%m-%d %H:%M:%S')}（北京时间）"
         
         # 今天日期
         if re.search(r"今天.*(几号|日期)|今天是几号|今天几号", text):
-            today = datetime.now()
+            today = get_beijing_time()
             weekdays = ['周一', '周二', '周三', '周四', '周五', '周六', '周日']
             wd = weekdays[today.weekday()]
             return f"今天是 {today.strftime('%Y-%m-%d')}（{wd}）"
