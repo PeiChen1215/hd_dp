@@ -1,12 +1,13 @@
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, and_, func
 from uuid import UUID, uuid4
-from datetime import datetime, timezone
+from datetime import datetime
 
 from app.models.memo import Memo
 from app.models.sync_record import SyncRecord
 from app import schemas
 from app.core.websocket import notify_data_change
+from app.core.timezone import get_beijing_time
 
 
 async def get_memo_by_id(db: AsyncSession, memo_id: str, user_id: str) -> Memo | None:
@@ -53,7 +54,9 @@ async def list_memos(
 
 
 async def create_memo(
-    db: AsyncSession, user_id: str, memo_in: schemas.MemoCreate
+    db: AsyncSession,
+    user_id: str,
+    memo_in: schemas.MemoCreate
 ) -> Memo:
     """
     创建新备忘录
@@ -66,14 +69,14 @@ async def create_memo(
     Returns:
         创建的备忘录对象
     """
-    now = datetime.now(timezone.utc)
+    now = get_beijing_time()
     db_memo = Memo(
         user_id=UUID(user_id),
         content=memo_in.content,
         tags=memo_in.tags or []
     )
     db.add(db_memo)
-    await db.flush()
+    await db.flush()  # 先 flush 获取 memo.id
     
     # 创建同步记录（用于增量同步）
     sync_record = SyncRecord(
@@ -84,6 +87,7 @@ async def create_memo(
         client_id=None,
         action="create",
         payload={
+            "id": str(db_memo.id),
             "content": memo_in.content,
             "tags": memo_in.tags or []
         },
@@ -136,7 +140,7 @@ async def update_memo(
     await db.flush()
     
     # 创建同步记录（用于增量同步）
-    now = datetime.now(timezone.utc)
+    now = get_beijing_time()
     sync_record = SyncRecord(
         id=uuid4(),
         user_id=UUID(user_id),
@@ -186,7 +190,7 @@ async def delete_memo(db: AsyncSession, memo_id: str, user_id: str) -> bool:
     await db.flush()
     
     # 创建同步记录（用于增量同步）
-    now = datetime.now(timezone.utc)
+    now = get_beijing_time()
     sync_record = SyncRecord(
         id=uuid4(),
         user_id=UUID(user_id),
@@ -217,8 +221,9 @@ def _memo_to_dict(memo: Memo) -> dict:
     """将 Memo 对象转换为字典（用于 WebSocket 推送）"""
     return {
         "id": str(memo.id),
+        "user_id": str(memo.user_id),
         "content": memo.content,
-        "tags": memo.tags,
+        "tags": memo.tags or [],
         "created_at": memo.created_at.isoformat() if memo.created_at else None,
         "updated_at": memo.updated_at.isoformat() if memo.updated_at else None
     }

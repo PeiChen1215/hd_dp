@@ -723,11 +723,13 @@ class WanjiAgent(BaseAgent):
         return list(result.scalars().all())
     
     async def _save_conversation(self, role: str, content: str):
-        """保存对话记录到数据库"""
+        """保存对话记录到数据库（使用北京时间）"""
+        from app.core.timezone import get_beijing_time
         conv = AgentConversation(
             user_id=self.user_id,
             role=role,
-            content=content
+            content=content,
+            created_at=get_beijing_time()
         )
         self.db.add(conv)
         await self.db.commit()
